@@ -9,6 +9,7 @@ import {
   warnMissingProviderGroupPolicyFallbackOnce,
 } from "../config/runtime-group-policy.js";
 import type { SignalReactionNotificationMode } from "../config/types.js";
+import { logVerbose } from "../globals.js";
 import type { BackoffPolicy } from "../infra/backoff.js";
 import { waitForTransportReady } from "../infra/transport-ready.js";
 import { saveMediaBuffer } from "../media/store.js";
@@ -278,6 +279,44 @@ async function fetchAttachment(params: {
   return { path: saved.path, contentType: saved.contentType };
 }
 
+// 獲取 Sticker 圖片（通過 packId + stickerId）
+async function fetchSticker(params: {
+  baseUrl: string;
+  account?: string;
+  packId: string;
+  stickerId: number;
+  maxBytes: number;
+}): Promise<{ path: string; contentType?: string } | null> {
+  const rpcParams: Record<string, unknown> = {
+    packId: params.packId,
+    stickerId: params.stickerId,
+  };
+  if (params.account) {
+    rpcParams.account = params.account;
+  }
+
+  try {
+    const result = await signalRpcRequest<{ data?: string; contentType?: string }>(
+      "getSticker",
+      rpcParams,
+      { baseUrl: params.baseUrl },
+    );
+    if (!result?.data) {
+      logVerbose(
+        `getSticker returned no data for packId=${params.packId} stickerId=${params.stickerId}`,
+      );
+      return null;
+    }
+    const buffer = Buffer.from(result.data, "base64");
+    const contentType = result.contentType ?? "image/webp";
+    const saved = await saveMediaBuffer(buffer, contentType, "inbound", params.maxBytes);
+    return { path: saved.path, contentType: saved.contentType };
+  } catch (err) {
+    logVerbose(`getSticker RPC failed: ${String(err)}`);
+    return null;
+  }
+}
+
 async function deliverReplies(params: {
   replies: ReplyPayload[];
   target: string;
@@ -432,6 +471,7 @@ export async function monitorSignalProvider(opts: MonitorSignalOpts = {}): Promi
       allowFrom,
       groupAllowFrom,
       groupPolicy,
+      requireMention,
       reactionMode,
       reactionAllowlist,
       mediaMaxBytes,
@@ -439,6 +479,7 @@ export async function monitorSignalProvider(opts: MonitorSignalOpts = {}): Promi
       sendReadReceipts,
       readReceiptsViaDaemon,
       fetchAttachment,
+      fetchSticker,
       deliverReplies: (params) => deliverReplies({ ...params, chunkMode }),
       resolveSignalReactionTargets,
       isSignalReactionMessage,
