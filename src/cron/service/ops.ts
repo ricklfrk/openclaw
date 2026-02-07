@@ -91,40 +91,43 @@ export async function start(state: CronServiceState) {
     state.deps.log.info({ enabled: false }, "cron: disabled");
     return;
   }
-
-  const startupInterruptedJobIds = new Set<string>();
-  await locked(state, async () => {
-    await ensureLoaded(state, { skipRecompute: true });
-    const jobs = state.store?.jobs ?? [];
-    for (const job of jobs) {
-      if (typeof job.state.runningAtMs === "number") {
-        state.deps.log.warn(
-          { jobId: job.id, runningAtMs: job.state.runningAtMs },
-          "cron: clearing stale running marker on startup",
-        );
-        job.state.runningAtMs = undefined;
-        startupInterruptedJobIds.add(job.id);
+  try {
+    const startupInterruptedJobIds = new Set<string>();
+    await locked(state, async () => {
+      await ensureLoaded(state, { skipRecompute: true });
+      const jobs = state.store?.jobs ?? [];
+      for (const job of jobs) {
+        if (typeof job.state.runningAtMs === "number") {
+          state.deps.log.warn(
+            { jobId: job.id, runningAtMs: job.state.runningAtMs },
+            "cron: clearing stale running marker on startup",
+          );
+          job.state.runningAtMs = undefined;
+          startupInterruptedJobIds.add(job.id);
+        }
       }
-    }
-    await persist(state);
-  });
+      await persist(state);
+    });
 
-  await runMissedJobs(state, { skipJobIds: startupInterruptedJobIds });
+    await runMissedJobs(state, { skipJobIds: startupInterruptedJobIds });
 
-  await locked(state, async () => {
-    await ensureLoaded(state, { forceReload: true, skipRecompute: true });
-    recomputeNextRuns(state);
-    await persist(state);
-    armTimer(state);
-    state.deps.log.info(
-      {
-        enabled: true,
-        jobs: state.store?.jobs.length ?? 0,
-        nextWakeAtMs: nextWakeAtMs(state) ?? null,
-      },
-      "cron: started",
-    );
-  });
+    await locked(state, async () => {
+      await ensureLoaded(state, { forceReload: true, skipRecompute: true });
+      recomputeNextRuns(state);
+      await persist(state);
+    });
+  } catch (err) {
+    state.deps.log.error({ err: String(err) }, "cron: start failed, will retry on next tick");
+  }
+  armTimer(state);
+  state.deps.log.info(
+    {
+      enabled: true,
+      jobs: state.store?.jobs.length ?? 0,
+      nextWakeAtMs: nextWakeAtMs(state) ?? null,
+    },
+    "cron: started",
+  );
 }
 
 export function stop(state: CronServiceState) {
