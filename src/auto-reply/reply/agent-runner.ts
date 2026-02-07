@@ -17,6 +17,7 @@ import {
 import type { TypingMode } from "../../config/types.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
 import { emitDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
+import { startIdleReminder } from "../../infra/idle-reminder.js";
 import { generateSecureUuid } from "../../infra/secure-random.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -707,6 +708,11 @@ export async function runReplyAgent(params: {
     }
     if (responseUsageLine) {
       finalPayloads = appendUsageLine(finalPayloads, responseUsageLine);
+    }
+
+    // Start idle reminder for non-heartbeat runs with actual payloads
+    if (!isHeartbeat && sessionKey && storePath && finalPayloads.length > 0) {
+      startIdleReminder({ sessionKey, storePath });
     }
 
     return finalizeWithFollowup(

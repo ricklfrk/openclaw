@@ -192,7 +192,12 @@ export function buildEmbeddedRunPayloads(params: {
     replyItems.push({ text: reasoningText, isReasoning: true });
   }
 
-  const fallbackAnswerText = params.lastAssistant ? extractAssistantText(params.lastAssistant) : "";
+  // When enforceFinalTag is active, the subscribe layer already filtered out
+  // non-<final> content — skip the raw-assistant fallback to avoid leaking thinking.
+  const fallbackAnswerText =
+    params.lastAssistant && !params.enforceFinalTag
+      ? extractAssistantText(params.lastAssistant)
+      : "";
   const shouldSuppressRawErrorText = (text: string) => {
     if (!lastAssistantErrored) {
       return false;
