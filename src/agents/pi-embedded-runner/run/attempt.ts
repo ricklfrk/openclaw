@@ -77,6 +77,7 @@ import { resolveEffectiveToolFsWorkspaceOnly } from "../../tool-fs-policy.js";
 import { resolveTranscriptPolicy } from "../../transcript-policy.js";
 import { DEFAULT_BOOTSTRAP_FILENAME } from "../../workspace.js";
 import { isRunnerAbortError } from "../abort.js";
+import { wrapStreamFnWithBuffer } from "../buffered-stream.js";
 import { appendCacheTtlTimestamp, isCacheTtlEligibleProvider } from "../cache-ttl.js";
 import { buildEmbeddedExtensionFactories } from "../extensions.js";
 import { applyExtraParamsToAgent } from "../extra-params.js";
@@ -970,6 +971,11 @@ export async function runEmbeddedAttempt(
           activeSession.agent.streamFn,
         );
       }
+
+      // Buffer Google model streams: collect the full response before replaying
+      // events downstream. Prevents Gemini CLI OAuth streams from being
+      // interrupted while downstream is processing.
+      activeSession.agent.streamFn = wrapStreamFnWithBuffer(activeSession.agent.streamFn);
 
       try {
         const prior = await sanitizeSessionHistory({
