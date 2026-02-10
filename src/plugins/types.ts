@@ -160,6 +160,8 @@ export type PluginCommandContext = {
   accountId?: string;
   /** Thread/topic id if available */
   messageThreadId?: number;
+  /** Agent id for the session this command was received in */
+  agentId?: string;
 };
 
 /**
@@ -361,6 +363,8 @@ export type PluginHookBeforeAgentStartEvent = {
   prompt: string;
   /** Optional because legacy hook can run in pre-session phase. */
   messages?: unknown[];
+  /** Current system prompt text (read-only). Plugins can return a modified version via result.systemPrompt. */
+  systemPrompt?: string;
 };
 
 export type PluginHookBeforeAgentStartResult = PluginHookBeforePromptBuildResult &
