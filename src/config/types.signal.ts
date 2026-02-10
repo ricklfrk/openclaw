@@ -22,6 +22,8 @@ export type SignalAccountConfig = CommonChannelMessagingConfig & {
   ignoreAttachments?: boolean;
   ignoreStories?: boolean;
   sendReadReceipts?: boolean;
+  /** Per-group config (keyed by group ID, "*" = default for all groups). */
+  groups?: Record<string, { requireMention?: boolean; tools?: unknown; toolsBySender?: unknown }>;
   /** Outbound text chunk size (chars). Default: 4000. */
   textChunkLimit?: number;
   /** Reaction notification mode (off|own|all|allowlist). Default: own. */
