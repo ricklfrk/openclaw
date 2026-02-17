@@ -1,4 +1,3 @@
-import type { SignalEventHandlerDeps, SignalReceivePayload } from "./event-handler.types.js";
 import { resolveHumanDelayConfig } from "../../agents/identity.js";
 import { hasControlCommand } from "../../auto-reply/command-detection.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
@@ -553,7 +552,7 @@ export function createSignalEventHandler(
         deps: eDeps,
       });
     }
-    if (eDeps && checkRequireMention({ dataMessage, isGroup, deps: eDeps })) {
+    if (eDeps && checkRequireMention({ dataMessage, isGroup, groupId, deps: eDeps })) {
       return;
     }
 
