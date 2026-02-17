@@ -12,7 +12,6 @@ import { resolveEffectiveMessagesConfig } from "../../agents/identity.js";
 import { normalizeChannelId } from "../../channels/plugins/index.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { buildOutboundSessionContext } from "../../infra/outbound/session-context.js";
-import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
 import type { OriginatingChannelType } from "../templating.js";
 import type { ReplyPayload } from "../types.js";
@@ -80,30 +79,11 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
     : cfg.messages?.responsePrefix === "auto"
       ? undefined
       : cfg.messages?.responsePrefix;
-  let normalized = normalizeReplyPayload(payload, {
+  const normalized = normalizeReplyPayload(payload, {
     responsePrefix,
   });
   if (!normalized) {
     return { ok: true };
-  }
-
-  // Run message_sending plugin hook — allows plugins to modify or cancel outgoing text.
-  const hookRunner = getGlobalHookRunner();
-  if (hookRunner?.hasHooks("message_sending") && normalized.text) {
-    try {
-      const hookResult = await hookRunner.runMessageSending(
-        { to, content: normalized.text },
-        { channelId: normalizedChannel ?? String(channel), accountId },
-      );
-      if (hookResult?.cancel) {
-        return { ok: true };
-      }
-      if (hookResult?.content !== undefined) {
-        normalized = { ...normalized, text: hookResult.content };
-      }
-    } catch {
-      // hook errors already caught+logged by the runner; deliver original
-    }
   }
 
   let text = normalized.text ?? "";
