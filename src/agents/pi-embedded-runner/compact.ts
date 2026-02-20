@@ -631,6 +631,7 @@ async function compactEmbeddedPiSessionCore(
         // caused by the transient compact model.
         const prior = await sanitizeSessionHistory({
           messages: session.messages,
+          config: params.config,
           sessionManager,
           sessionId: params.sessionId,
           policy: transcriptPolicy,
