@@ -74,7 +74,9 @@ export function createFollowupRunner(params: {
     const shouldRouteToOriginating = isRoutableChannel(originatingChannel) && originatingTo;
 
     if (!shouldRouteToOriginating && !opts?.onBlockReply) {
-      logVerbose("followup queue: no onBlockReply handler; dropping payloads");
+      defaultRuntime.log?.(
+        `[followup-trace] dropping: no route (channel=${originatingChannel} to=${originatingTo}) and no onBlockReply`,
+      );
       return;
     }
 
@@ -236,6 +238,9 @@ export function createFollowupRunner(params: {
 
       const payloadArray = runResult.payloads ?? [];
       if (payloadArray.length === 0) {
+        defaultRuntime.log?.(
+          `[followup-trace] payloads empty — didSend=${runResult.didSendViaMessagingTool} sentTargets=${JSON.stringify(runResult.messagingToolSentTargets ?? [])} sentTexts=${(runResult.messagingToolSentTexts ?? []).length}`,
+        );
         return;
       }
       const sanitizedPayloads = payloadArray.flatMap((payload) => {
@@ -292,6 +297,9 @@ export function createFollowupRunner(params: {
       const finalPayloads = suppressMessagingToolReplies ? [] : mediaFilteredPayloads;
 
       if (finalPayloads.length === 0) {
+        defaultRuntime.log?.(
+          `[followup-trace] finalPayloads empty — suppress=${suppressMessagingToolReplies} sanitized=${sanitizedPayloads.length} deduped=${dedupedPayloads.length} mediaFiltered=${mediaFilteredPayloads.length}`,
+        );
         return;
       }
 
@@ -312,6 +320,9 @@ export function createFollowupRunner(params: {
         }
       }
 
+      defaultRuntime.log?.(
+        `[followup-trace] sending ${finalPayloads.length} payloads to ${queued.originatingChannel}:${queued.originatingTo} text=${finalPayloads[0]?.text?.slice(0, 60)}`,
+      );
       await sendFollowupPayloads(finalPayloads, queued);
     } finally {
       // Both signals are required for the typing controller to clean up.

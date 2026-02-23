@@ -1070,6 +1070,9 @@ export async function runEmbeddedPiAgent(
             compactionCount: autoCompactionCount > 0 ? autoCompactionCount : undefined,
           };
 
+          console.log(
+            `[payload-trace] assistantTexts=${attempt.assistantTexts.length} texts="${attempt.assistantTexts.map((t) => t.slice(0, 40)).join("|")}" didSendViaTool=${attempt.didSendViaMessagingTool}`,
+          );
           const payloads = buildEmbeddedRunPayloads({
             assistantTexts: attempt.assistantTexts,
             toolMetas: attempt.toolMetas,
@@ -1086,6 +1089,9 @@ export async function runEmbeddedPiAgent(
             inlineToolResultsAllowed: false,
             didSendViaMessagingTool: attempt.didSendViaMessagingTool,
           });
+          console.log(
+            `[payload-trace] payloads=${payloads.length} texts="${payloads.map((p) => (p.text ?? "").slice(0, 40)).join("|")}"`,
+          );
 
           // Timeout aborts can leave the run without any assistant payloads.
           // Emit an explicit timeout error instead of silently completing, so
