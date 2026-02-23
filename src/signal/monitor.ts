@@ -9,7 +9,6 @@ import {
   warnMissingProviderGroupPolicyFallbackOnce,
 } from "../config/runtime-group-policy.js";
 import type { SignalReactionNotificationMode } from "../config/types.js";
-import { logVerbose } from "../globals.js";
 import type { BackoffPolicy } from "../infra/backoff.js";
 import { waitForTransportReady } from "../infra/transport-ready.js";
 import { saveMediaBuffer } from "../media/store.js";

@@ -793,7 +793,8 @@ export function resolveCompactModelRef(params: {
   callerProvider?: string;
   callerModel?: string;
 }): { provider: string; modelId: string } {
-  const compactRef = params.config?.agents?.defaults?.model?.compact?.trim();
+  const modelCfg = params.config?.agents?.defaults?.model;
+  const compactRef = (typeof modelCfg === "object" ? modelCfg?.compact : undefined)?.trim();
   if (compactRef) {
     const slashIdx = compactRef.indexOf("/");
     if (slashIdx > 0) {
