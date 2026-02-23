@@ -347,14 +347,17 @@ export function buildAgentSystemPrompt(params: {
   );
   const reasoningHint = params.reasoningTagHint
     ? [
-        "ALL internal reasoning MUST be inside <think>...</think>.",
-        "Do not output any analysis outside <think>.",
-        "Format every reply as <think>...</think> then <final>...</final>, with no other text.",
-        "Only the final user-visible reply may appear inside <final>.",
-        "Only text inside <final> is shown to the user; everything else is discarded and never seen by the user.",
+        // Backtick-quote tag references in instructions to prevent Gemini from
+        // fragmenting its native thinking when it reflects on these tags.
+        "ALL internal reasoning MUST be inside `<think>...</think>`.",
+        "Do not output any analysis outside `<think>`.",
+        "Format every reply as `<think>...</think>` then `<final>...</final>`, with no other text.",
+        "Only the final user-visible reply may appear inside `<final>`.",
+        "Only text inside `<final>` is shown to the user; everything else is discarded and never seen by the user.",
         "NEVER output tool calls as plain text (e.g. [Historical context: ...], [Tool Call: ...]).",
         "Always use the structured JSON function calling API to invoke tools.",
-        "If a tool is unavailable, say so in <final> — do not simulate or narrate the call as text.",
+        "If a tool is unavailable, say so in `<final>` — do not simulate or narrate the call as text.",
+        "IMPORTANT: You MUST wrap every user-visible reply in `<final>...</final>`. Replies without `<final>` tags will be silently discarded and the user will see nothing.",
         "Example:",
         "<think>Short internal reasoning.</think>",
         "<final>Hey there! What would you like to do next?</final>",
