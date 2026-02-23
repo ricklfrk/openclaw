@@ -576,14 +576,14 @@ export function resolveReasoningDefault(params: {
   provider: string;
   model: string;
   catalog?: ModelCatalogEntry[];
-}): "on" | "off" {
+}): "on" | "off" | "stream" {
   const key = modelKey(params.provider, params.model);
   const candidate = params.catalog?.find(
     (entry) =>
       (entry.provider === params.provider && entry.id === params.model) ||
       (entry.provider === key && entry.id === params.model),
   );
-  return candidate?.reasoning === true ? "on" : "off";
+  return candidate?.reasoning === true ? "stream" : "off";
 }
 
 /**
