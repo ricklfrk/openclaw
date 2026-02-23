@@ -130,15 +130,25 @@ const nsfwPlugin = {
     // Inject prompt fragments when enabled for this agent
     api.on("before_agent_start", async (event, ctx) => {
       const agent = ctx?.agentId ?? "main";
+      api.logger.info(
+        `nsfw: before_agent_start fired for agent="${agent}", enabled=${nsfwEnabledAgents.has(agent)}, enabledAgents=[${[...nsfwEnabledAgents].join(",")}]`,
+      );
       if (!nsfwEnabledAgents.has(agent)) {
         return;
       }
 
       // Part 1: replace the Identity line in the system prompt
       let modifiedSystemPrompt: string | undefined;
-      const currentSystemPrompt = (event as { systemPrompt?: string }).systemPrompt;
+      const currentSystemPrompt = event.systemPrompt;
       if (currentSystemPrompt) {
+        const hasIdentityLine = currentSystemPrompt.includes(IDENTITY_LINE);
+        api.logger.info(
+          `nsfw: systemPrompt length=${currentSystemPrompt.length}, hasIdentityLine=${hasIdentityLine}`,
+        );
         modifiedSystemPrompt = currentSystemPrompt.replace(IDENTITY_LINE, NSFW_SYSTEM_PROMPT_PART1);
+        api.logger.info(`nsfw: modifiedSystemPrompt length=${modifiedSystemPrompt.length}`);
+      } else {
+        api.logger.info("nsfw: no systemPrompt in event");
       }
 
       return {
