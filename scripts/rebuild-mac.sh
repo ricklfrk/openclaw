@@ -23,7 +23,7 @@ log "All processes killed"
 
 # 2) Clean dist and installed app
 log "Cleaning dist/ and /Applications/OpenClaw.app"
-rm -rf dist/OpenClaw.app
+rm -rf dist/
 rm -rf /Applications/OpenClaw.app
 
 # 3) Full TypeScript build
