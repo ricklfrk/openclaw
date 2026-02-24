@@ -12,6 +12,7 @@ import type { SignalReactionNotificationMode } from "../config/types.js";
 import type { BackoffPolicy } from "../infra/backoff.js";
 import { waitForTransportReady } from "../infra/transport-ready.js";
 import { saveMediaBuffer } from "../media/store.js";
+import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { createNonExitingRuntime, type RuntimeEnv } from "../runtime.js";
 import { normalizeStringEntries } from "../shared/string-normalization.js";
 import { normalizeE164 } from "../utils.js";
@@ -292,9 +293,31 @@ async function deliverReplies(params: {
 }) {
   const { replies, target, baseUrl, account, accountId, runtime, maxBytes, textLimit, chunkMode } =
     params;
+  const hookRunner = getGlobalHookRunner();
   for (const payload of replies) {
     const mediaList = payload.mediaUrls ?? (payload.mediaUrl ? [payload.mediaUrl] : []);
-    const text = payload.text ?? "";
+    let text = payload.text ?? "";
+    if (!text && mediaList.length === 0) {
+      continue;
+    }
+
+    if (hookRunner?.hasHooks("message_sending")) {
+      try {
+        const hookResult = await hookRunner.runMessageSending(
+          { to: target, content: text, metadata: { channel: "signal", accountId } },
+          { channelId: "signal", accountId: accountId ?? undefined },
+        );
+        if (hookResult?.cancel) {
+          continue;
+        }
+        if (hookResult?.content != null) {
+          text = hookResult.content;
+        }
+      } catch {
+        // Don't block delivery on hook failure
+      }
+    }
+
     if (!text && mediaList.length === 0) {
       continue;
     }
