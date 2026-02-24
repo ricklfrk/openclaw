@@ -604,7 +604,7 @@ export async function runEmbeddedPiAgent(
             authStorage,
             modelRegistry,
             agentId: workspaceResolution.agentId,
-            legacyBeforeAgentStartResult,
+            legacyBeforeAgentStartResult: undefined,
             thinkLevel,
             verboseLevel: params.verboseLevel,
             reasoningLevel: params.reasoningLevel,
