@@ -25,6 +25,7 @@ import type {
 } from "./types.js";
 
 type SqliteDatabase = import("node:sqlite").DatabaseSync;
+import type { MemoryQmdSearchMode } from "../config/types.memory.js";
 import type {
   ResolvedMemoryBackendConfig,
   ResolvedQmdConfig,
@@ -63,6 +64,42 @@ function resolveWindowsCommandShim(command: string): string {
     return `${trimmed}.cmd`;
   }
   return command;
+}
+
+type McporterToolName = string;
+
+// Current QMD MCP tool names → legacy aliases (older QMD builds).
+// Try the primary name first; on "tool not found" errors, retry with the fallback.
+const MCPORTER_TOOL_ALIASES: Record<string, string> = {
+  vsearch: "vector_search",
+  query: "deep_search",
+};
+
+function mcporterToolForSearchMode(mode: MemoryQmdSearchMode): McporterToolName {
+  if (mode === "search") {
+    return "search";
+  }
+  if (mode === "vsearch") {
+    return "vsearch";
+  }
+  return "query";
+}
+
+function isMcporterToolNotFoundError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /tool.*not found|unknown tool|no such tool/i.test(msg);
+}
+
+// mcporter --output json may return JS-style object literals (unquoted keys,
+// single-quoted strings) instead of strict JSON. Try JSON.parse first; on
+// failure, apply lightweight normalisation and retry.
+function parseMcporterJson(stdout: string): unknown {
+  try {
+    return JSON.parse(stdout);
+  } catch {
+    const sanitized = stdout.replace(/'/g, '"').replace(/([{,])\s*(\w+)\s*:/g, '$1"$2":');
+    return JSON.parse(sanitized);
+  }
 }
 
 function hasHanScript(value: string): boolean {
@@ -206,9 +243,11 @@ export class QmdMemoryManager implements MemorySearchManager {
     this.agentStateDir = path.join(this.stateDir, "agents", this.agentId);
     this.qmdDir = path.join(this.agentStateDir, "qmd");
     // QMD uses XDG base dirs for its internal state.
-    // Collections are managed via `qmd collection add` and stored inside the index DB.
-    // - config:  $XDG_CONFIG_HOME (contexts, etc.)
-    // - cache:   $XDG_CACHE_HOME/qmd/index.sqlite
+    // - cache:   $XDG_CACHE_HOME/qmd/index.sqlite  (index + embeddings)
+    // - config:  $QMD_CONFIG_DIR/index.yml          (collection YAML)
+    // QMD reads collection definitions from QMD_CONFIG_DIR (falling back to
+    // ~/.config/qmd/); without per-agent override both agents share one YAML
+    // and `qmd update` indexes every collection into every agent's DB.
     this.xdgConfigHome = path.join(this.qmdDir, "xdg-config");
     this.xdgCacheHome = path.join(this.qmdDir, "xdg-cache");
     this.indexPath = path.join(this.xdgCacheHome, "qmd", "index.sqlite");
@@ -217,6 +256,7 @@ export class QmdMemoryManager implements MemorySearchManager {
       ...process.env,
       XDG_CONFIG_HOME: this.xdgConfigHome,
       XDG_CACHE_HOME: this.xdgCacheHome,
+      QMD_CONFIG_DIR: path.join(this.xdgConfigHome, "qmd"),
       NO_COLOR: "1",
     };
     this.sessionExporter = this.qmd.sessions.enabled
@@ -634,31 +674,30 @@ export class QmdMemoryManager implements MemorySearchManager {
     ): Promise<QmdQueryResult[]> => {
       try {
         if (mcporterEnabled) {
-          const tool: "search" | "vector_search" | "deep_search" =
-            qmdSearchCommand === "search"
-              ? "search"
-              : qmdSearchCommand === "vsearch"
-                ? "vector_search"
-                : "deep_search";
-          const minScore = opts?.minScore ?? 0;
-          if (collectionNames.length > 1) {
-            return await this.runMcporterAcrossCollections({
+          try {
+            const tool = mcporterToolForSearchMode(qmdSearchCommand);
+            const minScore = opts?.minScore ?? 0;
+            if (collectionNames.length > 1) {
+              return await this.runMcporterAcrossCollections({
+                tool,
+                query: trimmed,
+                limit,
+                minScore,
+                collectionNames,
+              });
+            }
+            return await this.runQmdSearchViaMcporter({
+              mcporter: this.qmd.mcporter,
               tool,
               query: trimmed,
               limit,
               minScore,
-              collectionNames,
+              collection: collectionNames[0],
+              timeoutMs: this.qmd.limits.timeoutMs,
             });
+          } catch (mcpErr) {
+            log.warn(`mcporter/qmd failed, falling back to direct CLI: ${String(mcpErr)}`);
           }
-          return await this.runQmdSearchViaMcporter({
-            mcporter: this.qmd.mcporter,
-            tool,
-            query: trimmed,
-            limit,
-            minScore,
-            collection: collectionNames[0],
-            timeoutMs: this.qmd.limits.timeoutMs,
-          });
         }
         if (collectionNames.length > 1) {
           return await this.runQueryAcrossCollections(
@@ -1204,7 +1243,7 @@ export class QmdMemoryManager implements MemorySearchManager {
 
   private async runQmdSearchViaMcporter(params: {
     mcporter: ResolvedQmdMcporterConfig;
-    tool: "search" | "vector_search" | "deep_search";
+    tool: McporterToolName;
     query: string;
     limit: number;
     minScore: number;
@@ -1213,7 +1252,6 @@ export class QmdMemoryManager implements MemorySearchManager {
   }): Promise<QmdQueryResult[]> {
     await this.ensureMcporterDaemonStarted(params.mcporter);
 
-    const selector = `${params.mcporter.serverName}.${params.tool}`;
     const callArgs: Record<string, unknown> = {
       query: params.query,
       limit: params.limit,
@@ -1223,23 +1261,51 @@ export class QmdMemoryManager implements MemorySearchManager {
       callArgs.collection = params.collection;
     }
 
-    const result = await this.runMcporter(
-      [
-        "call",
-        selector,
-        "--args",
-        JSON.stringify(callArgs),
-        "--output",
-        "json",
-        "--timeout",
-        String(Math.max(0, params.timeoutMs)),
-      ],
-      { timeoutMs: Math.max(params.timeoutMs + 2_000, 5_000) },
-    );
+    const callTool = async (toolName: string) => {
+      const selector = `${params.mcporter.serverName}.${toolName}`;
+      return this.runMcporter(
+        [
+          "call",
+          selector,
+          "--args",
+          JSON.stringify(callArgs),
+          "--output",
+          "json",
+          "--timeout",
+          String(Math.max(0, params.timeoutMs)),
+        ],
+        { timeoutMs: Math.max(params.timeoutMs + 2_000, 5_000) },
+      );
+    };
 
-    const parsedUnknown: unknown = JSON.parse(result.stdout);
+    let result: { stdout: string; stderr: string };
+    try {
+      result = await callTool(params.tool);
+    } catch (err) {
+      const fallback = MCPORTER_TOOL_ALIASES[params.tool];
+      if (fallback && isMcporterToolNotFoundError(err)) {
+        log.info(
+          `mcporter tool "${params.tool}" not found; retrying with legacy name "${fallback}"`,
+        );
+        result = await callTool(fallback);
+      } else {
+        throw err;
+      }
+    }
+
+    const parsedUnknown: unknown = parseMcporterJson(result.stdout);
     const isRecord = (value: unknown): value is Record<string, unknown> =>
       typeof value === "object" && value !== null && !Array.isArray(value);
+
+    // mcporter wraps MCP errors in { content: [...], isError: true }
+    if (isRecord(parsedUnknown) && parsedUnknown.isError === true) {
+      const contentArr = Array.isArray(parsedUnknown.content) ? parsedUnknown.content : [];
+      const errorText = contentArr
+        .filter(isRecord)
+        .map((c) => (typeof c.text === "string" ? c.text : ""))
+        .join("; ");
+      throw new Error(`mcporter tool returned error: ${errorText || "(unknown)"}`);
+    }
 
     const structured =
       isRecord(parsedUnknown) && isRecord(parsedUnknown.structuredContent)
@@ -1820,7 +1886,7 @@ export class QmdMemoryManager implements MemorySearchManager {
   }
 
   private async runMcporterAcrossCollections(params: {
-    tool: "search" | "vector_search" | "deep_search";
+    tool: McporterToolName;
     query: string;
     limit: number;
     minScore: number;
