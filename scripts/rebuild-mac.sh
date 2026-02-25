@@ -41,6 +41,9 @@ if [ -d "$INSTALLED_CLI_DIR" ]; then
   log "Syncing dev build to installed CLI ($INSTALLED_CLI_DIR)"
   rsync -a --delete dist/ "$INSTALLED_CLI_DIR/dist/"
   cp package.json "$INSTALLED_CLI_DIR/package.json"
+  # Sync workspace extensions (nsfw, regex-replace, etc.) that the published
+  # npm package doesn't include; without them the CLI shim rejects the config.
+  rsync -a extensions/ "$INSTALLED_CLI_DIR/extensions/" --ignore-existing
   log "Installed CLI updated"
 fi
 
