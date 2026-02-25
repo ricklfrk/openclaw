@@ -320,7 +320,7 @@ export async function saveToPrecache(
   const dir = groupId ? resolveGroupDir(groupId) : PRECACHE_DIR;
   await fs.mkdir(dir, { recursive: true });
   const ext = contentType?.split("/")[1]?.split(";")[0] ?? "bin";
-  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const filename = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
   const filePath = path.join(dir, filename);
   await fs.writeFile(filePath, buffer);
   logVerbose(`signal: saved to precache fallback: ${filePath}`);

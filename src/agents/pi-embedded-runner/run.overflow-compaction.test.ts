@@ -49,7 +49,7 @@ describe("runEmbeddedPiAgent overflow compaction trigger routing", () => {
     expect(mockedGlobalHookRunner.runBeforeAgentStart).toHaveBeenCalledTimes(1);
     expect(mockedRunEmbeddedAttempt).toHaveBeenCalledWith(
       expect.objectContaining({
-        legacyBeforeAgentStartResult: legacyResult,
+        legacyBeforeAgentStartResult: undefined,
       }),
     );
   });

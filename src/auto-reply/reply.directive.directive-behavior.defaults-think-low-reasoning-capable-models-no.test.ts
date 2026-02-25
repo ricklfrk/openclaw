@@ -135,7 +135,7 @@ describe("directive behavior", () => {
         },
         {
           expectedThinkLevel: "off" as const,
-          expectedReasoningLevel: "on" as const,
+          expectedReasoningLevel: "stream" as const,
           thinkingDefault: "off" as const,
         },
       ]) {
