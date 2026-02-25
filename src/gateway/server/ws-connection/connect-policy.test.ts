@@ -63,7 +63,7 @@ describe("ws connect policy", () => {
       controlUiConfig: { allowInsecureAuth: true, dangerouslyDisableDeviceAuth: false },
       deviceRaw: null,
     });
-    // Remote Control UI with allowInsecureAuth -> still rejected.
+    // Public internet Control UI with allowInsecureAuth -> still rejected.
     expect(
       evaluateMissingDeviceIdentity({
         hasDeviceIdentity: false,
@@ -75,6 +75,7 @@ describe("ws connect policy", () => {
         authOk: true,
         hasSharedAuth: true,
         isLocalClient: false,
+        isPrivateNetworkClient: false,
       }).kind,
     ).toBe("reject-control-ui-insecure-auth");
 
@@ -92,6 +93,40 @@ describe("ws connect policy", () => {
         isLocalClient: true,
       }).kind,
     ).toBe("allow");
+
+    // Private network (intranet) Control UI with allowInsecureAuth -> allowed.
+    expect(
+      evaluateMissingDeviceIdentity({
+        hasDeviceIdentity: false,
+        role: "operator",
+        isControlUi: true,
+        controlUiAuthPolicy: controlUiStrict,
+        sharedAuthOk: true,
+        authOk: true,
+        hasSharedAuth: true,
+        isLocalClient: false,
+        isPrivateNetworkClient: true,
+      }).kind,
+    ).toBe("allow");
+
+    // Private network without allowInsecureAuth -> rejected.
+    expect(
+      evaluateMissingDeviceIdentity({
+        hasDeviceIdentity: false,
+        role: "operator",
+        isControlUi: true,
+        controlUiAuthPolicy: resolveControlUiAuthPolicy({
+          isControlUi: true,
+          controlUiConfig: { dangerouslyDisableDeviceAuth: false },
+          deviceRaw: null,
+        }),
+        sharedAuthOk: true,
+        authOk: true,
+        hasSharedAuth: true,
+        isLocalClient: false,
+        isPrivateNetworkClient: true,
+      }).kind,
+    ).toBe("reject-control-ui-insecure-auth");
 
     // Control UI without allowInsecureAuth, even on localhost -> rejected.
     const controlUiNoInsecure = resolveControlUiAuthPolicy({

@@ -75,6 +75,7 @@ export function evaluateMissingDeviceIdentity(params: {
   authOk: boolean;
   hasSharedAuth: boolean;
   isLocalClient: boolean;
+  isPrivateNetworkClient?: boolean;
 }): MissingDeviceIdentityDecision {
   if (params.hasDeviceIdentity) {
     return { kind: "allow" };
@@ -83,12 +84,13 @@ export function evaluateMissingDeviceIdentity(params: {
     return { kind: "allow" };
   }
   if (params.isControlUi && !params.controlUiAuthPolicy.allowBypass) {
-    // Allow localhost Control UI connections when allowInsecureAuth is configured.
-    // Localhost has no network interception risk, and browser SubtleCrypto
+    // Allow localhost and private-network (intranet/LAN/Tailnet) Control UI
+    // connections when allowInsecureAuth is configured. Browser SubtleCrypto
     // (needed for device identity) is unavailable in insecure HTTP contexts.
-    // Remote connections are still rejected to preserve the MitM protection
-    // that the security fix (#20684) intended.
-    if (!params.controlUiAuthPolicy.allowInsecureAuthConfigured || !params.isLocalClient) {
+    // Public internet connections are still rejected to preserve the MitM
+    // protection that the security fix (#20684) intended.
+    const isPrivateOrLocal = params.isLocalClient || params.isPrivateNetworkClient === true;
+    if (!params.controlUiAuthPolicy.allowInsecureAuthConfigured || !isPrivateOrLocal) {
       return { kind: "reject-control-ui-insecure-auth" };
     }
   }

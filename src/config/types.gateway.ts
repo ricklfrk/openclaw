@@ -96,8 +96,9 @@ export type GatewayControlUiConfig = {
   dangerouslyAllowHostHeaderOriginFallback?: boolean;
   /**
    * Insecure-auth toggle.
-   * Control UI still requires secure context + device identity unless
-   * dangerouslyDisableDeviceAuth is enabled.
+   * When true, allows Control UI connections without device identity from
+   * localhost and private networks (LAN, Tailnet, link-local).
+   * Public internet connections still require HTTPS / device identity.
    */
   allowInsecureAuth?: boolean;
   /** DANGEROUS: Disable device identity checks for the Control UI (default: false). */

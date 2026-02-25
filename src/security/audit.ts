@@ -436,8 +436,9 @@ function collectGatewayConfigFindings(
       severity: "warn",
       title: "Control UI insecure auth toggle enabled",
       detail:
-        "gateway.controlUi.allowInsecureAuth=true does not bypass secure context or device identity checks; only dangerouslyDisableDeviceAuth disables Control UI device identity checks.",
-      remediation: "Disable it or switch to HTTPS (Tailscale Serve) or localhost.",
+        "gateway.controlUi.allowInsecureAuth=true allows Control UI connections without device identity from localhost and private networks (LAN, Tailnet, link-local).",
+      remediation:
+        "Disable when not needed, or switch to HTTPS (Tailscale Serve) for full device identity protection.",
     });
   }
 

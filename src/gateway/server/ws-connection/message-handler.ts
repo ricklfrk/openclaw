@@ -40,6 +40,7 @@ import {
 import {
   isLocalishHost,
   isLoopbackAddress,
+  isPrivateOrLoopbackAddress,
   isTrustedProxyAddress,
   resolveClientIp,
 } from "../../net.js";
@@ -294,6 +295,7 @@ export function attachGatewayWsMessageHandler(params: {
   const hasUntrustedProxyHeaders = hasProxyHeaders && !remoteIsTrustedProxy;
   const hostIsLocalish = isLocalishHost(requestHost);
   const isLocalClient = isLocalDirectRequest(upgradeReq, trustedProxies, allowRealIpFallback);
+  const isPrivateNetworkClient = !isLocalClient && isPrivateOrLoopbackAddress(clientIp);
   const reportedClientIp =
     isLocalClient || hasUntrustedProxyHeaders
       ? undefined
@@ -584,6 +586,7 @@ export function attachGatewayWsMessageHandler(params: {
             authOk,
             hasSharedAuth,
             isLocalClient,
+            isPrivateNetworkClient,
           });
           if (decision.kind === "allow") {
             return true;
@@ -591,7 +594,7 @@ export function attachGatewayWsMessageHandler(params: {
 
           if (decision.kind === "reject-control-ui-insecure-auth") {
             const errorMessage =
-              "control ui requires device identity (use HTTPS or localhost secure context)";
+              "control ui requires device identity (use HTTPS, localhost, or set allowInsecureAuth for private networks)";
             markHandshakeFailure("control-ui-insecure-auth", {
               insecureAuthConfigured: controlUiAuthPolicy.allowInsecureAuthConfigured,
             });
