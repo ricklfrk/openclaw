@@ -186,6 +186,14 @@ fi
 # 3) Package app (no embedded gateway).
 run_step "package app" bash -lc "cd '${ROOT_DIR}' && SKIP_TSC=${SKIP_TSC:-1} '${ROOT_DIR}/scripts/package-mac-app.sh'"
 
+# 3b) Sync dev build to the installed CLI so the Mac app shim stays current.
+# ~/.openclaw/bin/openclaw is a shim that always invokes ~/.openclaw/lib/...;
+# without this step, gateway management commands (install/restart/status) use stale code.
+INSTALLED_CLI_DIR="${HOME}/.openclaw/lib/node_modules/openclaw"
+if [ -d "${INSTALLED_CLI_DIR}" ] && [ -d "${ROOT_DIR}/dist" ]; then
+  run_step "sync dev build to installed CLI" bash -c "rsync -a --delete '${ROOT_DIR}/dist/' '${INSTALLED_CLI_DIR}/dist/' && cp '${ROOT_DIR}/package.json' '${INSTALLED_CLI_DIR}/package.json'"
+fi
+
 choose_app_bundle() {
   if [[ -n "${APP_BUNDLE}" && -d "${APP_BUNDLE}" ]]; then
     return 0
@@ -214,10 +222,16 @@ if [[ "$NO_SIGN" -ne 1 && "$ATTACH_ONLY" -ne 1 && -f "${LAUNCHAGENT_DISABLE_MARK
   run_step "clear launchagent disable marker" /bin/rm -f "${LAUNCHAGENT_DISABLE_MARKER}"
 fi
 
-# When unsigned, ensure the gateway LaunchAgent targets the repo CLI (before the app launches).
-# This reduces noisy "could not connect" errors during app startup.
+# Install gateway LaunchAgent from the dev repo so the plist points at dist/index.js
+# (not ~/.openclaw/lib/ which lacks workspace extensions).
+# In attach-only mode the app won't touch launchd, so we still install here.
+if [ "$ATTACH_ONLY" -ne 1 ]; then
+  run_step "install gateway launch agent (dev)" bash -lc "cd '${ROOT_DIR}' && node openclaw.mjs daemon install --force --runtime node"
+fi
+
+# Unsigned-specific: also restart the daemon eagerly and verify the port,
+# since the app launches with --attach-only and won't manage the gateway itself.
 if [ "$NO_SIGN" -eq 1 ] && [ "$ATTACH_ONLY" -ne 1 ]; then
-  run_step "install gateway launch agent (unsigned)" bash -lc "cd '${ROOT_DIR}' && node openclaw.mjs daemon install --force --runtime node"
   run_step "restart gateway daemon (unsigned)" bash -lc "cd '${ROOT_DIR}' && node openclaw.mjs daemon restart"
   if [[ "${GATEWAY_WAIT_SECONDS}" -gt 0 ]]; then
     run_step "wait for gateway (unsigned)" sleep "${GATEWAY_WAIT_SECONDS}"

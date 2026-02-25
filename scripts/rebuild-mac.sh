@@ -33,6 +33,17 @@ if ! pnpm build; then
 fi
 log "Build succeeded"
 
+# 3b) Sync dev build to the installed CLI so the Mac app shim stays current.
+# ~/.openclaw/bin/openclaw is a shim that always invokes the installed copy;
+# without this step, gateway management commands use a stale CLI version.
+INSTALLED_CLI_DIR="$HOME/.openclaw/lib/node_modules/openclaw"
+if [ -d "$INSTALLED_CLI_DIR" ]; then
+  log "Syncing dev build to installed CLI ($INSTALLED_CLI_DIR)"
+  rsync -a --delete dist/ "$INSTALLED_CLI_DIR/dist/"
+  cp package.json "$INSTALLED_CLI_DIR/package.json"
+  log "Installed CLI updated"
+fi
+
 # 4) Package Mac app (ad-hoc signing for dev)
 log "Packaging Mac app"
 export ALLOW_ADHOC_SIGNING=1
@@ -46,11 +57,18 @@ log "Installing to /Applications"
 cp -R dist/OpenClaw.app /Applications/OpenClaw.app
 log "Installed"
 
-# 6) Launch
+# 6) Install gateway daemon from dev repo so the LaunchAgent plist points here
+#    (not at ~/.openclaw/lib/ which lacks workspace extensions).
+log "Installing gateway daemon from dev repo"
+if ! node openclaw.mjs daemon install --force --runtime node; then
+  log "Warning: daemon install failed (gateway may need manual start)"
+fi
+
+# 7) Launch
 log "Launching OpenClaw"
 open /Applications/OpenClaw.app
 
-# 7) Verify
+# 8) Verify
 sleep 3
 if pgrep -f "OpenClaw.app/Contents/MacOS/OpenClaw" >/dev/null 2>&1; then
   log "OpenClaw is running ✓"
