@@ -142,8 +142,8 @@ export const appendUsageLine = (payloads: ReplyPayload[], line: string): ReplyPa
   return updated;
 };
 
-export const resolveEnforceFinalTag = (run: FollowupRun["run"], provider: string) =>
-  Boolean(run.enforceFinalTag || isReasoningTagProvider(provider));
+export const resolveEnforceFinalTag = (run: FollowupRun["run"], provider: string, model?: string) =>
+  Boolean(run.enforceFinalTag || isReasoningTagProvider(provider, model));
 
 export function resolveModelFallbackOptions(run: FollowupRun["run"]) {
   return {
@@ -174,7 +174,7 @@ export function buildEmbeddedRunBaseParams(params: {
     skillsSnapshot: params.run.skillsSnapshot,
     ownerNumbers: params.run.ownerNumbers,
     senderIsOwner: params.run.senderIsOwner,
-    enforceFinalTag: resolveEnforceFinalTag(params.run, params.provider),
+    enforceFinalTag: resolveEnforceFinalTag(params.run, params.provider, params.model),
     provider: params.provider,
     model: params.model,
     ...params.authProfile,

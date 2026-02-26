@@ -43,7 +43,7 @@ describe("parseBooleanValue", () => {
 });
 
 describe("isReasoningTagProvider", () => {
-  const cases: Array<{
+  const providerCases: Array<{
     name: string;
     value: string | null | undefined;
     expected: boolean;
@@ -84,11 +84,31 @@ describe("isReasoningTagProvider", () => {
     { name: "returns false for openrouter", value: "openrouter", expected: false },
   ];
 
-  for (const testCase of cases) {
+  for (const testCase of providerCases) {
     it(testCase.name, () => {
       expect(isReasoningTagProvider(testCase.value)).toBe(testCase.expected);
     });
   }
+
+  it("returns true for gemini model on custom provider", () => {
+    expect(isReasoningTagProvider("myapi", "gemini-3-flash-preview")).toBe(true);
+  });
+
+  it("returns true for gemini model on unknown provider", () => {
+    expect(isReasoningTagProvider("custom-proxy", "gemini-3-pro-preview")).toBe(true);
+  });
+
+  it("returns true for minimax model on custom provider", () => {
+    expect(isReasoningTagProvider("myapi", "minimax-m2.1")).toBe(true);
+  });
+
+  it("returns false for non-gemini model on custom provider", () => {
+    expect(isReasoningTagProvider("myapi", "gpt-4.1")).toBe(false);
+  });
+
+  it("returns false when both provider and model are null", () => {
+    expect(isReasoningTagProvider(null, null)).toBe(false);
+  });
 });
 
 describe("splitShellArgs", () => {

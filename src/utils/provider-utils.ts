@@ -6,29 +6,36 @@
  * Returns true if the provider requires reasoning to be wrapped in tags
  * (e.g. <think> and <final>) in the text stream, rather than using native
  * API fields for reasoning/thinking.
+ *
+ * Also checks the model name so Gemini/Minimax models proxied through
+ * custom providers (e.g. myapi/gemini-3-flash) are still detected.
  */
-export function isReasoningTagProvider(provider: string | undefined | null): boolean {
-  if (!provider) {
-    return false;
-  }
-  const normalized = provider.trim().toLowerCase();
+export function isReasoningTagProvider(
+  provider: string | undefined | null,
+  model?: string | null,
+): boolean {
+  if (provider) {
+    const normalized = provider.trim().toLowerCase();
 
-  // Check for exact matches or known prefixes/substrings for reasoning providers.
-  // Note: Ollama is intentionally excluded - its OpenAI-compatible endpoint
-  // handles reasoning natively via the `reasoning` field in streaming chunks,
-  // so tag-based enforcement is unnecessary and causes all output to be
-  // discarded as "(no output)" (#2279).
-  if (
-    normalized === "google" ||
-    normalized === "google-gemini-cli" ||
-    normalized === "google-generative-ai"
-  ) {
-    return true;
+    if (
+      normalized === "google" ||
+      normalized === "google-gemini-cli" ||
+      normalized === "google-generative-ai"
+    ) {
+      return true;
+    }
+
+    if (normalized.includes("minimax")) {
+      return true;
+    }
   }
 
-  // Handle Minimax (M2.1 is chatty/reasoning-like)
-  if (normalized.includes("minimax")) {
-    return true;
+  // Check model name for known reasoning-tag models served through custom providers
+  if (model) {
+    const normalizedModel = model.trim().toLowerCase();
+    if (normalizedModel.includes("gemini") || normalizedModel.includes("minimax")) {
+      return true;
+    }
   }
 
   return false;
