@@ -368,6 +368,23 @@ describe("mention helpers", () => {
     expect(matchesMentionPatterns("workbot: hi", regexes)).toBe(true);
     expect(matchesMentionPatterns("global: hi", regexes)).toBe(false);
   });
+
+  it("derives @name and /name with trailing space from identity.name (case-insensitive)", () => {
+    const regexes = buildMentionRegexes(
+      {
+        agents: {
+          list: [{ id: "main", identity: { name: "mea" } }],
+        },
+      },
+      "main",
+    );
+    expect(matchesMentionPatterns("@mea hello", regexes)).toBe(true);
+    expect(matchesMentionPatterns("@Mea hello", regexes)).toBe(true);
+    expect(matchesMentionPatterns("@MEA hello", regexes)).toBe(true);
+    expect(matchesMentionPatterns("/mea hello", regexes)).toBe(true);
+    expect(matchesMentionPatterns("/Mea go", regexes)).toBe(true);
+    expect(matchesMentionPatterns("/MEA ", regexes)).toBe(true);
+  });
 });
 
 describe("resolveGroupRequireMention", () => {

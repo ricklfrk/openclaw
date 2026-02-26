@@ -25,32 +25,52 @@ function clampBounds(start: number, length: number, textLength: number) {
   return { start: safeStart, end: safeEnd };
 }
 
-export function renderSignalMentions(message: string, mentions?: SignalMention[] | null) {
-  if (!message || !mentions?.length) {
+/**
+ * When mentions array is missing/empty (e.g. signal-cli drops it), replace U+FFFC
+ * with @fallbackIdentifier so the message displays as @bot instead of ￼.
+ * Does not affect mention detection (requireMention still uses patterns/native only).
+ */
+function replacePlaceholderWithFallback(
+  message: string,
+  fallbackIdentifier: string | null | undefined,
+): string {
+  if (!message || !fallbackIdentifier?.trim() || !message.includes(OBJECT_REPLACEMENT)) {
     return message;
   }
+  return message.split(OBJECT_REPLACEMENT).join(`@${fallbackIdentifier.trim()}`);
+}
 
-  let normalized = message;
-  const candidates = mentions.filter(isValidMention).toSorted((a, b) => b.start! - a.start!);
-
-  for (const mention of candidates) {
-    const identifier = mention.uuid ?? mention.number;
-    if (!identifier) {
-      continue;
-    }
-
-    const { start, end } = clampBounds(mention.start!, mention.length!, normalized.length);
-    if (start >= end) {
-      continue;
-    }
-    const slice = normalized.slice(start, end);
-
-    if (!slice.includes(OBJECT_REPLACEMENT)) {
-      continue;
-    }
-
-    normalized = normalized.slice(0, start) + `@${identifier}` + normalized.slice(end);
+export function renderSignalMentions(
+  message: string,
+  mentions?: SignalMention[] | null,
+  fallbackIdentifier?: string | null,
+): string {
+  if (!message) {
+    return message;
   }
+  if (mentions?.length) {
+    let normalized = message;
+    const candidates = mentions.filter(isValidMention).toSorted((a, b) => b.start! - a.start!);
 
-  return normalized;
+    for (const mention of candidates) {
+      const identifier = mention.uuid ?? mention.number;
+      if (!identifier) {
+        continue;
+      }
+
+      const { start, end } = clampBounds(mention.start!, mention.length!, normalized.length);
+      if (start >= end) {
+        continue;
+      }
+      const slice = normalized.slice(start, end);
+
+      if (!slice.includes(OBJECT_REPLACEMENT)) {
+        continue;
+      }
+
+      normalized = normalized.slice(0, start) + `@${identifier}` + normalized.slice(end);
+    }
+    return normalized;
+  }
+  return replacePlaceholderWithFallback(message, fallbackIdentifier);
 }

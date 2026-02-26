@@ -456,10 +456,11 @@ export function createSignalEventHandler(
         ? dataMessage?.reaction
         : null;
 
-    // Replace ￼ (object replacement character) with @uuid or @phone from mentions
-    // Signal encodes mentions as the object replacement character; hydrate them from metadata first.
+    // Replace ￼ (object replacement character) with @uuid or @phone from mentions.
+    // When signal-cli drops the mentions array, use bot account as fallback so ￼ shows as @bot (display only).
     const rawMessage = dataMessage?.message ?? "";
-    const normalizedMessage = renderSignalMentions(rawMessage, dataMessage?.mentions);
+    const fallbackId = deps.account ?? deps.accountId;
+    const normalizedMessage = renderSignalMentions(rawMessage, dataMessage?.mentions, fallbackId);
     const messageText = normalizedMessage.trim();
 
     const quoteText = dataMessage?.quote?.text?.trim() ?? "";
