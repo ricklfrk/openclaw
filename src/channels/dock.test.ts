@@ -89,6 +89,27 @@ describe("channels dock", () => {
     expect(formatted).toEqual(["+14155550100", "*"]);
   });
 
+  it("signal allowFrom formatter preserves UUID entries", () => {
+    const signalDock = getChannelDock("signal");
+
+    const formatted = signalDock?.config?.formatAllowFrom?.({
+      cfg: emptyConfig(),
+      allowFrom: [
+        "uuid:cb274c30-17ce-49ee-97c6-55dd9ce14595",
+        "signal:uuid:aabbccdd-1122-3344-5566-778899aabbcc",
+        "cb274c30-17ce-49ee-97c6-55dd9ce14595",
+        "+14155550100",
+      ],
+    });
+
+    expect(formatted).toEqual([
+      "uuid:cb274c30-17ce-49ee-97c6-55dd9ce14595",
+      "uuid:aabbccdd-1122-3344-5566-778899aabbcc",
+      "uuid:cb274c30-17ce-49ee-97c6-55dd9ce14595",
+      "+14155550100",
+    ]);
+  });
+
   it("telegram allowFrom formatter trims, strips prefix, and lowercases", () => {
     const telegramDock = getChannelDock("telegram");
 
