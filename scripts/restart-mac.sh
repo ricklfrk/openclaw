@@ -224,17 +224,16 @@ fi
 
 # Install gateway LaunchAgent from the dev repo so the plist points at dist/index.js
 # (not ~/.openclaw/lib/ which lacks workspace extensions).
-# In attach-only mode the app won't touch launchd, so we still install here.
-if [ "$ATTACH_ONLY" -ne 1 ]; then
-  run_step "install gateway launch agent (dev)" bash -lc "cd '${ROOT_DIR}' && node openclaw.mjs daemon install --force --runtime node"
-fi
+# Always install: in attach-only mode the app won't manage the gateway, so the
+# LaunchAgent must be present for launchd to keep it alive.
+run_step "install gateway launch agent (dev)" bash -lc "cd '${ROOT_DIR}' && node openclaw.mjs daemon install --force --runtime node"
 
-# Unsigned-specific: also restart the daemon eagerly and verify the port,
-# since the app launches with --attach-only and won't manage the gateway itself.
-if [ "$NO_SIGN" -eq 1 ] && [ "$ATTACH_ONLY" -ne 1 ]; then
-  run_step "restart gateway daemon (unsigned)" bash -lc "cd '${ROOT_DIR}' && node openclaw.mjs daemon restart"
+# In attach-only mode the app won't start/restart the gateway, so we do it here.
+# For unsigned builds without attach-only, same logic applies.
+if [ "$ATTACH_ONLY" -eq 1 ] || { [ "$NO_SIGN" -eq 1 ] && [ "$ATTACH_ONLY" -ne 1 ]; }; then
+  run_step "restart gateway daemon" bash -lc "cd '${ROOT_DIR}' && node openclaw.mjs daemon restart"
   if [[ "${GATEWAY_WAIT_SECONDS}" -gt 0 ]]; then
-    run_step "wait for gateway (unsigned)" sleep "${GATEWAY_WAIT_SECONDS}"
+    run_step "wait for gateway" sleep "${GATEWAY_WAIT_SECONDS}"
   fi
   GATEWAY_PORT="$(
     node -e '
@@ -250,7 +249,7 @@ if [ "$NO_SIGN" -eq 1 ] && [ "$ATTACH_ONLY" -ne 1 ]; then
       }
     '
   )"
-  run_step "verify gateway port ${GATEWAY_PORT} (unsigned)" bash -lc "lsof -iTCP:${GATEWAY_PORT} -sTCP:LISTEN | head -n 5 || true"
+  run_step "verify gateway port ${GATEWAY_PORT}" bash -lc "lsof -iTCP:${GATEWAY_PORT} -sTCP:LISTEN | head -n 5 || true"
 fi
 
 ATTACH_ONLY_ARGS=()
@@ -278,6 +277,6 @@ else
   fail "App exited immediately. Check ${LOG_PATH} or Console.app (User Reports)."
 fi
 
-if [ "$NO_SIGN" -eq 1 ] && [ "$ATTACH_ONLY" -ne 1 ]; then
-  run_step "show gateway launch agent args (unsigned)" bash -lc "/usr/bin/plutil -p '${HOME}/Library/LaunchAgents/ai.openclaw.gateway.plist' | head -n 40 || true"
+if [ -f "${HOME}/Library/LaunchAgents/ai.openclaw.gateway.plist" ]; then
+  run_step "show gateway launch agent args" bash -lc "/usr/bin/plutil -p '${HOME}/Library/LaunchAgents/ai.openclaw.gateway.plist' | head -n 40 || true"
 fi
