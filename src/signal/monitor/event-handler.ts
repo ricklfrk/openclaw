@@ -428,6 +428,7 @@ export function createSignalEventHandler(
       deps.runtime.error?.(`failed to parse event: ${String(err)}`);
       return;
     }
+
     if (payload?.exception?.message) {
       deps.runtime.error?.(`receive exception: ${payload.exception.message}`);
     }
@@ -456,11 +457,8 @@ export function createSignalEventHandler(
         ? dataMessage?.reaction
         : null;
 
-    // Replace ￼ (object replacement character) with @uuid or @phone from mentions.
-    // When signal-cli drops the mentions array, use bot account as fallback so ￼ shows as @bot (display only).
     const rawMessage = dataMessage?.message ?? "";
-    const fallbackId = deps.account ?? deps.accountId;
-    const normalizedMessage = renderSignalMentions(rawMessage, dataMessage?.mentions, fallbackId);
+    const normalizedMessage = renderSignalMentions(rawMessage, dataMessage?.mentions);
     const messageText = normalizedMessage.trim();
 
     const quoteText = dataMessage?.quote?.text?.trim() ?? "";
@@ -542,6 +540,17 @@ export function createSignalEventHandler(
       }
     }
 
+    // Pre-resolve agent route so requireMention can use the agent's identity.name patterns
+    const route = resolveAgentRoute({
+      cfg: deps.cfg,
+      channel: "signal",
+      accountId: deps.accountId,
+      peer: {
+        kind: isGroup ? "group" : "direct",
+        id: isGroup ? (groupId ?? "unknown") : senderPeerId,
+      },
+    });
+
     // Signal enhancements: pre-cache group media + requireMention gate
     const eDeps = deps.enhancementDeps;
     if (eDeps && isGroup) {
@@ -553,7 +562,16 @@ export function createSignalEventHandler(
         deps: eDeps,
       });
     }
-    if (eDeps && checkRequireMention({ dataMessage, isGroup, groupId, deps: eDeps })) {
+    if (
+      eDeps &&
+      checkRequireMention({
+        dataMessage,
+        isGroup,
+        groupId,
+        deps: eDeps,
+        agentId: route.agentId,
+      })
+    ) {
       return;
     }
 
@@ -583,16 +601,6 @@ export function createSignalEventHandler(
       });
       return;
     }
-
-    const route = resolveAgentRoute({
-      cfg: deps.cfg,
-      channel: "signal",
-      accountId: deps.accountId,
-      peer: {
-        kind: isGroup ? "group" : "direct",
-        id: isGroup ? (groupId ?? "unknown") : senderPeerId,
-      },
-    });
     const mentionRegexes = buildMentionRegexes(deps.cfg, route.agentId);
     // Detect both text-based mention patterns AND Signal native @mentions
     const nativeMention = isGroup && eDeps && hasNativeSignalMention(dataMessage, deps.account);

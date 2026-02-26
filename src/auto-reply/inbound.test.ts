@@ -385,6 +385,21 @@ describe("mention helpers", () => {
     expect(matchesMentionPatterns("/Mea go", regexes)).toBe(true);
     expect(matchesMentionPatterns("/MEA ", regexes)).toBe(true);
   });
+
+  it("merges identity.name patterns when mentionPatterns are set so @Mea /Mea still match", () => {
+    const regexes = buildMentionRegexes(
+      {
+        messages: { groupChat: { mentionPatterns: ["\\bopenclaw\\b"] } },
+        agents: {
+          list: [{ id: "main", identity: { name: "Mea" } }],
+        },
+      },
+      "main",
+    );
+    expect(matchesMentionPatterns("openclaw help", regexes)).toBe(true);
+    expect(matchesMentionPatterns("@Mea 在嗎?", regexes)).toBe(true);
+    expect(matchesMentionPatterns("/Mea 在嗎?", regexes)).toBe(true);
+  });
 });
 
 describe("resolveGroupRequireMention", () => {

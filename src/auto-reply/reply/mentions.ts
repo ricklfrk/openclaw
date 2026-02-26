@@ -44,14 +44,21 @@ function resolveMentionPatterns(cfg: OpenClawConfig | undefined, agentId?: strin
   }
   const agentConfig = agentId ? resolveAgentConfig(cfg, agentId) : undefined;
   const agentGroupChat = agentConfig?.groupChat;
-  if (agentGroupChat && Object.hasOwn(agentGroupChat, "mentionPatterns")) {
-    return agentGroupChat.mentionPatterns ?? [];
-  }
   const globalGroupChat = cfg.messages?.groupChat;
-  if (globalGroupChat && Object.hasOwn(globalGroupChat, "mentionPatterns")) {
-    return globalGroupChat.mentionPatterns ?? [];
+  let primary: string[] = [];
+  if (agentGroupChat && Object.hasOwn(agentGroupChat, "mentionPatterns")) {
+    primary = agentGroupChat.mentionPatterns ?? [];
+  } else if (globalGroupChat && Object.hasOwn(globalGroupChat, "mentionPatterns")) {
+    primary = globalGroupChat.mentionPatterns ?? [];
   }
   const derived = deriveMentionPatterns(agentConfig?.identity);
+  // When user sets mentionPatterns, still add identity.name patterns so "@Mea" "/Mea" work
+  if (primary.length > 0 && derived.length > 0) {
+    return [...primary, ...derived];
+  }
+  if (primary.length > 0) {
+    return primary;
+  }
   return derived.length > 0 ? derived : [];
 }
 

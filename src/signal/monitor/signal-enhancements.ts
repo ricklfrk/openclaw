@@ -7,6 +7,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { buildMentionRegexes, matchesMentionPatterns } from "../../auto-reply/reply/mentions.js";
 import { logVerbose } from "../../globals.js";
 import { logWarn } from "../../logger.js";
 import { mediaKindFromMime } from "../../media/constants.js";
@@ -430,9 +431,10 @@ export function checkRequireMention(params: {
   isGroup: boolean;
   groupId?: string;
   deps: SignalEnhancementDeps;
+  /** Target agent id for resolving identity.name mention patterns. */
+  agentId?: string;
 }): boolean {
   const { isGroup, groupId, deps } = params;
-  // Look up per-group requireMention; fall back to wildcard "*" entry.
   const groupCfg = (groupId && deps.groups?.[groupId]) || deps.groups?.["*"];
   const requireMention = groupCfg?.requireMention ?? false;
   if (!isGroup || !requireMention) {
@@ -443,11 +445,8 @@ export function checkRequireMention(params: {
   const mentions = enhanced?.mentions ?? [];
   const botAccount = deps.account?.replace(/^\+/, "") ?? "";
   const botAccountId = deps.accountId ?? "";
-  logVerbose(
-    `[requireMention] mentions=${JSON.stringify(mentions)}, botAccount=${botAccount}, botAccountId=${botAccountId}`,
-  );
 
-  const isMentioned = mentions.some((m) => {
+  const nativeMentioned = mentions.some((m) => {
     const mentionNumber = m.number?.replace(/^\+/, "") ?? "";
     if (mentionNumber && mentionNumber === botAccount) {
       return true;
@@ -459,12 +458,19 @@ export function checkRequireMention(params: {
     return false;
   });
 
-  if (!isMentioned) {
+  // Check text-based mention patterns (@Mea, /Mea, etc.)
+  const textToMatch = enhanced?.message ?? "";
+  const mentionRegexes = buildMentionRegexes(deps.cfg, params.agentId);
+  const textMentioned = matchesMentionPatterns(textToMatch, mentionRegexes);
+
+  if (!nativeMentioned && !textMentioned) {
     logVerbose("Blocked signal group message (requireMention, not mentioned)");
-    return true; // blocked
+    return true;
   }
-  logVerbose("[requireMention] mention detected, proceeding");
-  return false; // not blocked
+  logVerbose(
+    `[requireMention] mention detected (native=${nativeMentioned}, text=${textMentioned}), proceeding`,
+  );
+  return false;
 }
 
 // ── Pre-cache group media ───────────────────────────────────────────────────

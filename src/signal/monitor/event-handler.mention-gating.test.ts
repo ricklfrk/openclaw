@@ -210,16 +210,10 @@ describe("signal mention gating", () => {
 describe("renderSignalMentions", () => {
   const PLACEHOLDER = "\uFFFC";
 
-  it("returns the original message when no mentions and no fallback", () => {
+  it("returns the original message when no mentions", () => {
     const message = `${PLACEHOLDER} ping`;
     expect(renderSignalMentions(message, null)).toBe(message);
     expect(renderSignalMentions(message, [])).toBe(message);
-  });
-
-  it("replaces U+FFFC with fallback when mentions array is empty (e.g. signal-cli drops it)", () => {
-    const message = `${PLACEHOLDER} ping`;
-    expect(renderSignalMentions(message, [], "+15551234567")).toBe("@+15551234567 ping");
-    expect(renderSignalMentions(message, [], "mea")).toBe("@mea ping");
   });
 
   it("replaces placeholder code points using mention metadata", () => {
