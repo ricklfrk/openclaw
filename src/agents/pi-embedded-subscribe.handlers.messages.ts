@@ -299,6 +299,9 @@ export function handleMessageEnd(
   let mediaUrls = parsedText?.mediaUrls;
   let hasMedia = Boolean(mediaUrls && mediaUrls.length > 0);
 
+  // When enforceFinalTag mode produces empty text (model omitted <final> in a
+  // short reply, or code-span detection masked the closing tag), fall back to
+  // the raw assistant text with <final> tags stripped.
   if (!cleanedText && !hasMedia) {
     const rawTrimmed = rawText.trim();
     const rawStrippedFinal = rawTrimmed.replace(/<\s*\/?\s*final\s*>/gi, "").trim();
@@ -334,7 +337,10 @@ export function handleMessageEnd(
 
   const addedDuringMessage = ctx.state.assistantTexts.length > ctx.state.assistantTextBaseline;
   const chunkerHasBuffered = ctx.blockChunker?.hasBuffered() ?? false;
-  ctx.finalizeAssistantTexts({ text, addedDuringMessage, chunkerHasBuffered });
+  // Use cleanedText (which includes fallback) instead of raw stripBlockTags result
+  // so assistantTexts is populated even when enforceFinalTag mode returns empty.
+  const finalText = cleanedText || text;
+  ctx.finalizeAssistantTexts({ text: finalText, addedDuringMessage, chunkerHasBuffered });
 
   const onBlockReply = ctx.params.onBlockReply;
   const shouldEmitReasoning = Boolean(
@@ -360,15 +366,14 @@ export function handleMessageEnd(
   if (
     (ctx.state.blockReplyBreak === "message_end" ||
       (ctx.blockChunker ? ctx.blockChunker.hasBuffered() : ctx.state.blockBuffer.length > 0)) &&
-    text &&
+    finalText &&
     onBlockReply
   ) {
     if (ctx.blockChunker?.hasBuffered()) {
       ctx.blockChunker.drain({ force: true, emit: ctx.emitBlockChunk });
       ctx.blockChunker.reset();
-    } else if (text !== ctx.state.lastBlockReplyText) {
-      // Check for duplicates before emitting (same logic as emitBlockChunk).
-      const normalizedText = normalizeTextForComparison(text);
+    } else if (finalText !== ctx.state.lastBlockReplyText) {
+      const normalizedText = normalizeTextForComparison(finalText);
       if (
         isMessagingToolDuplicateNormalized(
           normalizedText,
@@ -376,11 +381,11 @@ export function handleMessageEnd(
         )
       ) {
         ctx.log.debug(
-          `Skipping message_end block reply - already sent via messaging tool: ${text.slice(0, 50)}...`,
+          `Skipping message_end block reply - already sent via messaging tool: ${finalText.slice(0, 50)}...`,
         );
       } else {
-        ctx.state.lastBlockReplyText = text;
-        const splitResult = ctx.consumeReplyDirectives(text, { final: true });
+        ctx.state.lastBlockReplyText = finalText;
+        const splitResult = ctx.consumeReplyDirectives(finalText, { final: true });
         if (splitResult) {
           const {
             text: cleanedText,
