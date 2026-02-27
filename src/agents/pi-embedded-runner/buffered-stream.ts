@@ -16,9 +16,19 @@ import { log } from "./logger.js";
  * google-antigravity). Non-Google models pass through to the underlying streamFn
  * unchanged.
  */
+function shouldBufferStream(model: { api?: string; id?: string }): boolean {
+  if (isGoogleModelApi(model.api)) {
+    return true;
+  }
+  if (model.id && model.id.toLowerCase().includes("gemini")) {
+    return true;
+  }
+  return false;
+}
+
 export function wrapStreamFnWithBuffer(streamFn: StreamFn): StreamFn {
   return (model, context, options) => {
-    if (!isGoogleModelApi(model.api)) {
+    if (!shouldBufferStream(model)) {
       return streamFn(model, context, options);
     }
 

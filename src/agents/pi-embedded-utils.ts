@@ -207,7 +207,10 @@ export function stripThinkingTagsFromText(text: string): string {
   return stripReasoningTagsFromText(text, { mode: "strict", trim: "both" });
 }
 
-export function extractAssistantText(msg: AssistantMessage): string {
+export function extractAssistantText(
+  msg: AssistantMessage,
+  options?: { preserveReasoningTags?: boolean },
+): string {
   const isTextBlock = (block: unknown): block is { type: "text"; text: string } => {
     if (!block || typeof block !== "object") {
       return false;
@@ -219,15 +222,16 @@ export function extractAssistantText(msg: AssistantMessage): string {
   const blocks = Array.isArray(msg.content)
     ? msg.content
         .filter(isTextBlock)
-        .map((c) =>
-          stripThinkingTagsFromText(
-            stripCallTagsFromText(
-              stripHistoricalContextText(
-                stripDowngradedToolCallText(stripMinimaxToolCallXml(c.text)),
-              ),
+        .map((c) => {
+          const cleaned = stripCallTagsFromText(
+            stripHistoricalContextText(
+              stripDowngradedToolCallText(stripMinimaxToolCallXml(c.text)),
             ),
-          ).trim(),
-        )
+          );
+          return options?.preserveReasoningTags
+            ? cleaned.trim()
+            : stripThinkingTagsFromText(cleaned).trim();
+        })
         .filter(Boolean)
     : [];
   const extracted = blocks.join("\n").trim();

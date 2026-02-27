@@ -270,6 +270,11 @@ export function handleMessageEnd(
   promoteThinkingTagsToBlocks(assistantMessage);
 
   const rawText = extractAssistantText(assistantMessage);
+  // Preserve <final> tags for stripBlockTags — extractAssistantText strips them,
+  // which breaks enforceFinalTag mode (it needs the tags to extract the reply).
+  const rawTextWithTags = extractAssistantText(assistantMessage, {
+    preserveReasoningTags: true,
+  });
   appendRawStream({
     ts: Date.now(),
     event: "assistant_message_end",
@@ -280,7 +285,7 @@ export function handleMessageEnd(
   });
 
   const text = resolveSilentReplyFallbackText({
-    text: ctx.stripBlockTags(rawText, { thinking: false, final: false }),
+    text: ctx.stripBlockTags(rawTextWithTags, { thinking: false, final: false }),
     messagingToolSentTexts: ctx.state.messagingToolSentTexts,
   });
   const rawThinking =
