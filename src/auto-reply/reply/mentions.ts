@@ -11,10 +11,9 @@ function deriveMentionPatterns(identity?: { name?: string; emoji?: string }) {
   if (name) {
     const parts = name.split(/\s+/).filter(Boolean).map(escapeRegExp);
     const re = parts.length ? parts.join(String.raw`\s+`) : escapeRegExp(name);
-    patterns.push(String.raw`\b@?${re}\b`);
-    // @name and /name with trailing space (e.g. "@mea " "/mea ") for channels like Signal
-    patterns.push(String.raw`@${re}\s`);
-    patterns.push(String.raw`/${re}\s`);
+    // Only match @name or /name (with word boundary or EOL), not bare name
+    patterns.push(String.raw`@${re}\b`);
+    patterns.push(String.raw`/${re}\b`);
   }
   const emoji = identity?.emoji?.trim();
   if (emoji) {
