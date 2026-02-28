@@ -12,11 +12,14 @@ import { log } from "./logger.js";
  * consumers. This avoids Gemini CLI OAuth streams being interrupted mid-flight
  * while downstream is busy processing.
  *
- * Only applies to Google model APIs (google-gemini-cli, google-generative-ai,
- * google-antigravity). Non-Google models pass through to the underlying streamFn
- * unchanged.
+ * Only applies to google-gemini-cli (OAuth-based). google-generative-ai (API key)
+ * is handled separately by wrapGoogleNonStreaming which uses the non-streaming
+ * generateContent endpoint instead.
  */
 function shouldBufferStream(model: { api?: string; id?: string }): boolean {
+  if (model.api === "google-generative-ai") {
+    return false;
+  }
   if (isGoogleModelApi(model.api)) {
     return true;
   }

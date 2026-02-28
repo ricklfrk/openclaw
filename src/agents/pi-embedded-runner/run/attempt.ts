@@ -81,6 +81,7 @@ import { wrapStreamFnWithBuffer } from "../buffered-stream.js";
 import { appendCacheTtlTimestamp, isCacheTtlEligibleProvider } from "../cache-ttl.js";
 import { buildEmbeddedExtensionFactories } from "../extensions.js";
 import { applyExtraParamsToAgent } from "../extra-params.js";
+import { wrapGoogleNonStreaming } from "../google-nonstream.js";
 import {
   logToolSchemasForGoogle,
   sanitizeSessionHistory,
@@ -974,9 +975,11 @@ export async function runEmbeddedAttempt(
         );
       }
 
-      // Buffer Google model streams: collect the full response before replaying
-      // events downstream. Prevents Gemini CLI OAuth streams from being
-      // interrupted while downstream is processing.
+      // google-generative-ai (API key): non-streaming generateContent to avoid
+      // safety-filter mid-stream interruptions; response is replayed as events.
+      // google-gemini-cli (OAuth): buffer the streaming response to prevent
+      // OAuth stream interruptions while downstream is processing.
+      activeSession.agent.streamFn = wrapGoogleNonStreaming(activeSession.agent.streamFn);
       activeSession.agent.streamFn = wrapStreamFnWithBuffer(activeSession.agent.streamFn);
 
       try {
