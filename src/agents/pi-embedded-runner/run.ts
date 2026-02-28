@@ -55,6 +55,7 @@ import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
 import { log } from "./logger.js";
 import { resolveModel } from "./model.js";
 import { runEmbeddedAttempt } from "./run/attempt.js";
+import { checkNonConformingOutput } from "./run/non-conforming-retry.js";
 import type { RunEmbeddedPiAgentParams } from "./run/params.js";
 import { buildEmbeddedRunPayloads } from "./run/payloads.js";
 import {
@@ -512,6 +513,7 @@ export async function runEmbeddedPiAgent(
       const MAX_RUN_LOOP_ITERATIONS = resolveMaxRunRetryIterations(profileCandidates.length);
       let overflowCompactionAttempts = 0;
       let toolResultTruncationAttempted = false;
+      let nonConformingRetried = false;
       const usageAccumulator = createUsageAccumulator();
       let lastRunPromptUsage: ReturnType<typeof normalizeUsage> | undefined;
       let autoCompactionCount = 0;
@@ -1047,6 +1049,24 @@ export async function runEmbeddedPiAgent(
                 status,
               });
             }
+          }
+
+          const nonConformingPrompt = checkNonConformingOutput({
+            enforceFinalTag: params.enforceFinalTag ?? false,
+            alreadyRetried: nonConformingRetried,
+            aborted,
+            timedOut,
+            assistantTexts: attempt.assistantTexts,
+            didSendViaMessagingTool: attempt.didSendViaMessagingTool,
+            lastAssistant,
+          });
+          if (nonConformingPrompt) {
+            nonConformingRetried = true;
+            params.prompt = nonConformingPrompt;
+            log.info(
+              `[non-conforming-retry] model output lacked <final> tags; injecting follow-up prompt for ${provider}/${modelId}`,
+            );
+            continue;
           }
 
           const usage = toNormalizedUsage(usageAccumulator);
