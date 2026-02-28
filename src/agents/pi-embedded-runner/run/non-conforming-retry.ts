@@ -3,14 +3,15 @@
  *
  * When the model produces substantial text without <final> tags the output
  * is suppressed (assistantTexts stays empty). This module detects that case
- * and returns a follow-up prompt so the run loop can retry once, giving the
- * model a chance to wrap its reply correctly.
+ * and either returns a follow-up prompt for retry or, after exhausting
+ * retries, falls back to delivering the raw text directly.
  */
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { isSilentReplyText } from "../../../auto-reply/tokens.js";
 import { extractAssistantText } from "../../pi-embedded-utils.js";
 
 const MIN_TEXT_LENGTH = 20;
+const MAX_RETRIES = 3;
 
 const NON_CONFORMING_FOLLOWUP_PROMPT =
   "[System: Your previous response was not visible to the user because " +
@@ -25,24 +26,30 @@ const NON_CONFORMING_FOLLOWUP_PROMPT =
   "<final>Hey there! What would you like to do next?</final>\n" +
   "Respond now with the correct format.]";
 
+export type NonConformingResult =
+  | { action: "retry"; prompt: string }
+  | { action: "fallback"; text: string }
+  | null;
+
 /**
  * Check whether the last attempt produced non-conforming output that
- * warrants an automatic retry.
+ * warrants an automatic retry or a fallback delivery.
  *
- * @returns The follow-up prompt to inject, or `null` if no retry is needed.
+ * - retryCount < MAX_RETRIES → `{ action: "retry", prompt }` (re-prompt the model)
+ * - retryCount >= MAX_RETRIES → `{ action: "fallback", text }` (deliver raw text)
+ * - otherwise → `null` (no action needed)
  */
 export function checkNonConformingOutput(params: {
   enforceFinalTag: boolean;
-  alreadyRetried: boolean;
+  retryCount: number;
   aborted: boolean;
   timedOut: boolean;
   assistantTexts: string[];
   didSendViaMessagingTool: boolean;
   lastAssistant: AssistantMessage | undefined;
-}): string | null {
+}): NonConformingResult {
   if (
     !params.enforceFinalTag ||
-    params.alreadyRetried ||
     params.aborted ||
     params.timedOut ||
     params.assistantTexts.length > 0 ||
@@ -57,5 +64,9 @@ export function checkNonConformingOutput(params: {
     return null;
   }
 
-  return NON_CONFORMING_FOLLOWUP_PROMPT;
+  if (params.retryCount < MAX_RETRIES) {
+    return { action: "retry", prompt: NON_CONFORMING_FOLLOWUP_PROMPT };
+  }
+
+  return { action: "fallback", text: rawText };
 }

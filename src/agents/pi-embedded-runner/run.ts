@@ -513,7 +513,7 @@ export async function runEmbeddedPiAgent(
       const MAX_RUN_LOOP_ITERATIONS = resolveMaxRunRetryIterations(profileCandidates.length);
       let overflowCompactionAttempts = 0;
       let toolResultTruncationAttempted = false;
-      let nonConformingRetried = false;
+      let nonConformingRetryCount = 0;
       const usageAccumulator = createUsageAccumulator();
       let lastRunPromptUsage: ReturnType<typeof normalizeUsage> | undefined;
       let autoCompactionCount = 0;
@@ -1051,22 +1051,28 @@ export async function runEmbeddedPiAgent(
             }
           }
 
-          const nonConformingPrompt = checkNonConformingOutput({
+          const nonConforming = checkNonConformingOutput({
             enforceFinalTag: params.enforceFinalTag ?? false,
-            alreadyRetried: nonConformingRetried,
+            retryCount: nonConformingRetryCount,
             aborted,
             timedOut,
             assistantTexts: attempt.assistantTexts,
             didSendViaMessagingTool: attempt.didSendViaMessagingTool,
             lastAssistant,
           });
-          if (nonConformingPrompt) {
-            nonConformingRetried = true;
-            params.prompt = nonConformingPrompt;
+          if (nonConforming?.action === "retry") {
+            nonConformingRetryCount += 1;
+            params.prompt = nonConforming.prompt;
             log.info(
-              `[non-conforming-retry] model output lacked <final> tags; injecting follow-up prompt for ${provider}/${modelId}`,
+              `[non-conforming-retry] attempt ${nonConformingRetryCount}/3: model output lacked <final> tags; retrying ${provider}/${modelId}`,
             );
             continue;
+          }
+          if (nonConforming?.action === "fallback") {
+            log.warn(
+              `[non-conforming-retry] exhausted ${nonConformingRetryCount} retries; delivering raw text for ${provider}/${modelId}`,
+            );
+            attempt.assistantTexts = [nonConforming.text];
           }
 
           const usage = toNormalizedUsage(usageAccumulator);
