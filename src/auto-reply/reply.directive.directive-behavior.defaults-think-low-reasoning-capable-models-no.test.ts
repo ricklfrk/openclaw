@@ -83,7 +83,7 @@ function mockReasoningCapableCatalog() {
 async function runReasoningDefaultCase(params: {
   home: string;
   expectedThinkLevel: "low" | "off";
-  expectedReasoningLevel: "off" | "on";
+  expectedReasoningLevel: "off" | "on" | "stream";
   thinkingDefault?: "off" | "low" | "medium" | "high";
 }) {
   vi.mocked(runEmbeddedPiAgent).mockClear();

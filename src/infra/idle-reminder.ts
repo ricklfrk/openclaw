@@ -33,6 +33,7 @@ import { getQueueSize } from "../process/command-queue.js";
 import { CommandLane } from "../process/lanes.js";
 import type { DeliverableMessageChannel } from "../utils/message-channel.js";
 import { deliverOutboundPayloads } from "./outbound/deliver.js";
+import { buildOutboundSessionContext } from "./outbound/session-context.js";
 import {
   resolveHeartbeatDeliveryTarget,
   resolveHeartbeatSenderContext,
@@ -449,6 +450,7 @@ async function sendSimulatedHeartbeat(
     to: deliveryTo,
     accountId: deliveryAccountId,
     payloads,
+    session: buildOutboundSessionContext({ cfg, sessionKey }),
   });
 
   // Update lastHeartbeatSentAt in session store
