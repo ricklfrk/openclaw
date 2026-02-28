@@ -31,6 +31,7 @@ import {
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getQueueSize } from "../process/command-queue.js";
 import { CommandLane } from "../process/lanes.js";
+import type { DeliverableMessageChannel } from "../utils/message-channel.js";
 import { deliverOutboundPayloads } from "./outbound/deliver.js";
 import {
   resolveHeartbeatDeliveryTarget,
@@ -360,12 +361,38 @@ async function sendSimulatedHeartbeat(
     return;
   }
 
-  // Resolve delivery target from session entry (lastChannel/lastTo/lastAccountId)
-  const delivery = resolveHeartbeatDeliveryTarget({ cfg, entry });
-  if (delivery.channel === "none" || !delivery.to) {
-    log.info("no delivery target", { sessionKey, channel: delivery.channel });
+  // Resolve delivery target: try heartbeat config first, then fall back to
+  // session's lastChannel/lastTo directly (idle-reminder is independent of
+  // the heartbeat.target config gate).
+  const heartbeatDelivery = resolveHeartbeatDeliveryTarget({ cfg, entry });
+  let deliveryChannel: DeliverableMessageChannel;
+  let deliveryTo: string;
+  let deliveryAccountId: string | undefined;
+
+  if (heartbeatDelivery.channel !== "none" && heartbeatDelivery.to) {
+    deliveryChannel = heartbeatDelivery.channel;
+    deliveryTo = heartbeatDelivery.to;
+    deliveryAccountId = heartbeatDelivery.accountId;
+  } else if (entry.lastChannel && entry.lastTo) {
+    deliveryChannel = entry.lastChannel as DeliverableMessageChannel;
+    deliveryTo = entry.lastTo;
+    deliveryAccountId = entry.lastAccountId ?? undefined;
+    log.debug("resolved delivery from session entry", {
+      sessionKey,
+      channel: deliveryChannel,
+      to: deliveryTo,
+    });
+  } else {
+    log.info("no delivery target", { sessionKey, channel: heartbeatDelivery.channel });
     return;
   }
+
+  const delivery = {
+    ...heartbeatDelivery,
+    channel: deliveryChannel,
+    to: deliveryTo,
+    accountId: deliveryAccountId,
+  };
 
   const { sender } = resolveHeartbeatSenderContext({ cfg, entry, delivery });
 
@@ -418,9 +445,9 @@ async function sendSimulatedHeartbeat(
 
   await deliverOutboundPayloads({
     cfg,
-    channel: delivery.channel,
-    to: delivery.to,
-    accountId: delivery.accountId,
+    channel: deliveryChannel,
+    to: deliveryTo,
+    accountId: deliveryAccountId,
     payloads,
   });
 
