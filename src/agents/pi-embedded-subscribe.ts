@@ -364,7 +364,15 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     // Repair malformed sequences (e.g. unclosed <think> before <final>)
     const repaired = repairMalformedReasoningTags(text);
     const inlineStateStart = state.inlineCode ?? createInlineCodeState();
-    const codeSpans = buildCodeSpanIndex(repaired, inlineStateStart);
+
+    // Code-span detection: only used for the non-enforcement path where we
+    // want to preserve literal <think>/<final> tags inside code blocks.
+    // In enforcement mode we skip code-span detection for both <think> and
+    // <final> tags because emoticon backticks (e.g. (つ´ω`)つ) can pair
+    // across <think>/<final> boundaries to create false code spans that mask
+    // closing tags, causing thinking content to leak.
+    const useCodeSpans = !params.enforceFinalTag;
+    const codeSpans = useCodeSpans ? buildCodeSpanIndex(repaired, inlineStateStart) : null;
 
     // 1. Handle <think> blocks (stateful, strip content inside)
     let processed = "";
@@ -373,7 +381,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     let inThinking = state.thinking;
     for (const match of repaired.matchAll(THINKING_TAG_SCAN_RE)) {
       const idx = match.index ?? 0;
-      if (codeSpans.isInside(idx)) {
+      if (codeSpans?.isInside(idx)) {
         continue;
       }
       if (!inThinking) {
@@ -392,14 +400,15 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     // If enforcement is disabled, we still strip the tags themselves to prevent
     // hallucinations (e.g. Minimax copying the style) from leaking, but we
     // do not enforce buffering/extraction logic.
-    const finalCodeSpans = buildCodeSpanIndex(processed, inlineStateStart);
     if (!params.enforceFinalTag) {
+      const finalCodeSpans = buildCodeSpanIndex(processed, inlineStateStart);
       state.inlineCode = finalCodeSpans.inlineState;
       FINAL_TAG_SCAN_RE.lastIndex = 0;
       return stripTagsOutsideCodeSpans(processed, FINAL_TAG_SCAN_RE, finalCodeSpans.isInside);
     }
 
-    // If enforcement is enabled, only return text that appeared inside a <final> block.
+    // Enforcement mode: extract only text inside <final> blocks.
+    // No code-span detection — <final> is our protocol tag, not Markdown.
     let result = "";
     FINAL_TAG_SCAN_RE.lastIndex = 0;
     let lastFinalIndex = 0;
@@ -408,18 +417,13 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
 
     for (const match of processed.matchAll(FINAL_TAG_SCAN_RE)) {
       const idx = match.index ?? 0;
-      if (finalCodeSpans.isInside(idx)) {
-        continue;
-      }
       const isClose = match[1] === "/";
 
       if (!inFinal && !isClose) {
-        // Found <final> start tag.
         inFinal = true;
         everInFinal = true;
         lastFinalIndex = idx + match[0].length;
       } else if (inFinal && isClose) {
-        // Found </final> end tag.
         result += processed.slice(lastFinalIndex, idx);
         inFinal = false;
         lastFinalIndex = idx + match[0].length;
@@ -431,18 +435,22 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     }
     state.final = inFinal;
 
-    // Strict Mode: If enforcing final tags, we MUST NOT return content unless
-    // we have seen a <final> tag. Otherwise, we leak "thinking out loud" text
-    // (e.g. "**Locating Manulife**...") that the model emitted without <think> tags.
     if (!everInFinal) {
       return "";
     }
 
-    // Hardened Cleanup: Remove any remaining <final> tags that might have been
-    // missed (e.g. nested tags or hallucinations) to prevent leakage.
-    const resultCodeSpans = buildCodeSpanIndex(result, inlineStateStart);
-    state.inlineCode = resultCodeSpans.inlineState;
-    return stripTagsOutsideCodeSpans(result, FINAL_TAG_SCAN_RE, resultCodeSpans.isInside);
+    // Hardened Cleanup: strip any remaining <final> tags (nested/hallucinated).
+    // No code-span gating needed in enforcement mode.
+    FINAL_TAG_SCAN_RE.lastIndex = 0;
+    state.inlineCode = buildCodeSpanIndex(result, inlineStateStart).inlineState;
+    let cleaned = "";
+    let cleanLastIndex = 0;
+    for (const match of result.matchAll(FINAL_TAG_SCAN_RE)) {
+      cleaned += result.slice(cleanLastIndex, match.index ?? 0);
+      cleanLastIndex = (match.index ?? 0) + match[0].length;
+    }
+    cleaned += result.slice(cleanLastIndex);
+    return cleaned;
   };
 
   const stripTagsOutsideCodeSpans = (

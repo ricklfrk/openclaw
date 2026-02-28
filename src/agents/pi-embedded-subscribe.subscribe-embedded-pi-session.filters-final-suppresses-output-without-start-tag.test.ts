@@ -1,4 +1,3 @@
-import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import {
   createStubSessionHarness,
@@ -37,7 +36,7 @@ describe("subscribeEmbeddedPiSession", () => {
 
     expect(onPartialReply).not.toHaveBeenCalled();
   });
-  it("emits agent events on message_end even without <final> tags", () => {
+  it("suppresses agent events on message_end without <final> tags in enforcement mode", () => {
     const { session, emit } = createStubSessionHarness();
 
     const onAgentEvent = vi.fn();
@@ -49,6 +48,22 @@ describe("subscribeEmbeddedPiSession", () => {
       onAgentEvent,
     });
     emitMessageStartAndEndForAssistantText({ emit, text: "Hello world" });
+    // With enforceFinalTag=true, content without <final> is treated as
+    // thinking and must be suppressed — no fallback to raw text.
+    expect(onAgentEvent).not.toHaveBeenCalled();
+  });
+  it("emits agent events on message_end with <final> tags in enforcement mode", () => {
+    const { session, emit } = createStubSessionHarness();
+
+    const onAgentEvent = vi.fn();
+
+    subscribeEmbeddedPiSession({
+      session,
+      runId: "run",
+      enforceFinalTag: true,
+      onAgentEvent,
+    });
+    emitMessageStartAndEndForAssistantText({ emit, text: "<final>Hello world</final>" });
     expectSingleAgentEventText(onAgentEvent.mock.calls, "Hello world");
   });
   it("does not require <final> when enforcement is off", () => {

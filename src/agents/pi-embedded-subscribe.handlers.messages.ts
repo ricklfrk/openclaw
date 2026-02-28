@@ -299,10 +299,11 @@ export function handleMessageEnd(
   let mediaUrls = parsedText?.mediaUrls;
   let hasMedia = Boolean(mediaUrls && mediaUrls.length > 0);
 
-  // When enforceFinalTag mode produces empty text (model omitted <final> in a
-  // short reply, or code-span detection masked the closing tag), fall back to
-  // the raw assistant text with <final> tags stripped.
-  if (!cleanedText && !hasMedia) {
+  // When the model omits <final> tags in a short reply (non-enforcement mode),
+  // fall back to the raw text. In enforceFinalTag mode we must NOT fall back —
+  // if the model didn't produce <final> tags the entire output is thinking
+  // content that must be suppressed.
+  if (!cleanedText && !hasMedia && !ctx.params.enforceFinalTag) {
     const rawTrimmed = rawText.trim();
     const rawStrippedFinal = rawTrimmed.replace(/<\s*\/?\s*final\s*>/gi, "").trim();
     const rawCandidate = rawStrippedFinal || rawTrimmed;
