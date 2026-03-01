@@ -37,6 +37,7 @@ vi.mock("../auth-profiles.js", () => ({
   markAuthProfileFailure: vi.fn(async () => {}),
   markAuthProfileGood: vi.fn(async () => {}),
   markAuthProfileUsed: vi.fn(async () => {}),
+  stampProfileLastUsed: vi.fn(async () => {}),
 }));
 
 vi.mock("../usage.js", () => ({

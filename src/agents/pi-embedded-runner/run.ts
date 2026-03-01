@@ -14,6 +14,7 @@ import {
   markAuthProfileGood,
   markAuthProfileUsed,
   resolveProfilesUnavailableReason,
+  stampProfileLastUsed,
 } from "../auth-profiles.js";
 import {
   CONTEXT_WINDOW_HARD_MIN_TOKENS,
@@ -465,6 +466,9 @@ export async function runEmbeddedPiAgent(
           }
           try {
             await applyApiKeyInfo(candidate);
+            if (lastProfileId) {
+              await stampProfileLastUsed({ store: authStore, profileId: lastProfileId, agentDir });
+            }
             profileIndex = nextIndex;
             thinkLevel = initialThinkLevel;
             attemptedThinking.clear();
@@ -491,6 +495,9 @@ export async function runEmbeddedPiAgent(
             continue;
           }
           await applyApiKeyInfo(profileCandidates[profileIndex]);
+          if (lastProfileId) {
+            await stampProfileLastUsed({ store: authStore, profileId: lastProfileId, agentDir });
+          }
           break;
         }
         if (profileIndex >= profileCandidates.length) {
