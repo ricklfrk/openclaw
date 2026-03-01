@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import type { AgentMessage, StreamFn } from "@mariozechner/pi-agent-core";
+import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
 import {
   createAgentSession,
@@ -718,6 +719,8 @@ export async function runEmbeddedAttempt(
     let sessionManager: ReturnType<typeof guardSessionManager> | undefined;
     let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
     let removeToolResultContextGuard: (() => void) | undefined;
+    let unsubscribeFn: (() => void) | undefined;
+    let attemptResultRef: EmbeddedRunAttemptResult | undefined;
     try {
       await repairSessionFileIfNeeded({
         sessionFile: params.sessionFile,
@@ -1114,6 +1117,7 @@ export async function runEmbeddedAttempt(
         getUsageTotals,
         getCompactionCount,
       } = subscription;
+      unsubscribeFn = unsubscribe;
 
       const queueHandle: EmbeddedPiQueueHandle = {
         queueMessage: async (text: string) => {
@@ -1476,16 +1480,9 @@ export async function runEmbeddedAttempt(
             `run cleanup: runId=${params.runId} sessionId=${params.sessionId} aborted=${aborted} timedOut=${timedOut}`,
           );
         }
-        try {
-          unsubscribe();
-        } catch (err) {
-          // unsubscribe() should never throw; if it does, it indicates a serious bug.
-          // Log at error level to ensure visibility, but don't rethrow in finally block
-          // as it would mask any exception from the try block above.
-          log.error(
-            `CRITICAL: unsubscribe failed, possible resource leak: runId=${params.runId} ${String(err)}`,
-          );
-        }
+        // NOTE: unsubscribe() moved to outer finally (after flushPendingToolResultsAfterIdle)
+        // so the subscriber stays alive to process late assistant messages from
+        // pi-agent-core's async tool loop when prompt() resolves early on auto-retry.
         clearActiveEmbeddedRun(params.sessionId, queueHandle, params.sessionKey);
         params.abortSignal?.removeEventListener?.("abort", onAbort);
       }
@@ -1527,7 +1524,7 @@ export async function runEmbeddedAttempt(
           });
       }
 
-      return {
+      const result: EmbeddedRunAttemptResult = {
         aborted,
         timedOut,
         timedOutDuringCompaction,
@@ -1552,6 +1549,8 @@ export async function runEmbeddedAttempt(
         // Client tool call detected (OpenResponses hosted tools)
         clientToolCall: clientToolCallDetected ?? undefined,
       };
+      attemptResultRef = result;
+      return result;
     } finally {
       // Always tear down the session (and release the lock) before we leave this attempt.
       //
@@ -1566,6 +1565,35 @@ export async function runEmbeddedAttempt(
         agent: session?.agent,
         sessionManager,
       });
+
+      // Unsubscribe *after* flush so the subscriber processes any late assistant
+      // messages produced by pi-agent-core's async tool loop when prompt() resolves
+      // early (auto-retry race). Previously unsubscribe lived in the inner finally
+      // and ran before flush, causing assistantTexts/lastAssistant to be stale.
+      try {
+        unsubscribeFn?.();
+      } catch (err) {
+        log.error(
+          `CRITICAL: unsubscribe failed, possible resource leak: runId=${params.runId} ${String(err)}`,
+        );
+      }
+
+      // Re-capture snapshot if flush produced new messages that the early
+      // prompt() return missed (prompt-early-resolve race condition).
+      if (attemptResultRef && session) {
+        const postFlushMessages = session.messages.slice();
+        if (postFlushMessages.length > attemptResultRef.messagesSnapshot.length) {
+          log.info(
+            `post-flush recapture: runId=${params.runId} pre=${attemptResultRef.messagesSnapshot.length} post=${postFlushMessages.length}`,
+          );
+          attemptResultRef.messagesSnapshot = postFlushMessages;
+          attemptResultRef.lastAssistant = postFlushMessages
+            .slice()
+            .toReversed()
+            .find((m): m is AssistantMessage => m.role === "assistant");
+        }
+      }
+
       session?.dispose();
       await sessionLock.release();
     }
