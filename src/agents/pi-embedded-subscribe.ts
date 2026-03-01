@@ -169,6 +169,22 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
   }) => {
     const { text, addedDuringMessage, chunkerHasBuffered } = args;
 
+    // Skip text already delivered via messaging tool (only check the last sent
+    // text). Prevents duplicate delivery when the agent repeats its tool-sent
+    // message as a normal response in the same turn.
+    if (text && messagingToolSentTextsNormalized.length > 0) {
+      const normalizedText = normalizeTextForComparison(text);
+      const lastSent =
+        messagingToolSentTextsNormalized[messagingToolSentTextsNormalized.length - 1];
+      if (isMessagingToolDuplicateNormalized(normalizedText, [lastSent])) {
+        log.debug(
+          `finalizeAssistantTexts: skipping text already sent via messaging tool: "${text.slice(0, 60)}..."`,
+        );
+        state.assistantTextBaseline = assistantTexts.length;
+        return;
+      }
+    }
+
     // If we're not streaming block replies, ensure the final payload includes
     // the final text even when interim streaming was enabled.
     if (state.includeReasoning && text && !params.onBlockReply) {
