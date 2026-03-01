@@ -493,27 +493,36 @@ export async function preCacheGroupMedia(params: {
     return;
   }
 
-  // Pre-cache normal attachment (fetchAttachment saves to upstream inbound/)
-  const firstAtt = enhanced.attachments?.[0];
-  if (firstAtt?.id) {
+  // Pre-cache normal attachments (fetchAttachment saves to upstream inbound/)
+  const attachments = enhanced.attachments ?? [];
+  for (let i = 0; i < attachments.length; i++) {
+    const att = attachments[i];
+    if (!att?.id) {
+      continue;
+    }
     try {
       const fetched = await deps.fetchAttachment({
         baseUrl: deps.baseUrl,
         account: deps.account,
-        attachment: firstAtt,
+        attachment: att,
         sender: senderRecipient,
         groupId,
         maxBytes: deps.mediaMaxBytes,
       });
       if (fetched) {
-        await cacheMedia(groupId, enhanced.timestamp, {
+        // First attachment uses raw timestamp key for backward-compat cache lookups
+        const cacheTimestamp =
+          i === 0 ? enhanced.timestamp : enhanced.timestamp ? enhanced.timestamp + i : undefined;
+        await cacheMedia(groupId, cacheTimestamp, {
           path: fetched.path,
-          contentType: fetched.contentType ?? firstAtt.contentType ?? undefined,
+          contentType: fetched.contentType ?? att.contentType ?? undefined,
         });
-        logVerbose(`signal: pre-cached attachment for group ${groupId}`);
+        logVerbose(
+          `signal: pre-cached attachment ${i + 1}/${attachments.length} for group ${groupId}`,
+        );
       }
     } catch (err) {
-      logVerbose(`signal: pre-cache attachment failed: ${String(err)}`);
+      logVerbose(`signal: pre-cache attachment ${i + 1} failed: ${String(err)}`);
     }
   }
 
@@ -547,6 +556,8 @@ export async function buildEnhancedMessage(params: {
   messageText: string;
   mediaPath?: string;
   mediaType?: string;
+  mediaPaths?: string[];
+  mediaTypes?: string[];
   placeholder: string;
   senderRecipient: string;
   groupId?: string;
@@ -555,32 +566,39 @@ export async function buildEnhancedMessage(params: {
   bodyText: string;
   mediaPath?: string;
   mediaType?: string;
+  mediaPaths?: string[];
+  mediaTypes?: string[];
   placeholder: string;
 }> {
   const { messageText, senderRecipient, groupId, deps } = params;
-  let { mediaPath, mediaType, placeholder } = params;
+  // Arrays are the source of truth; fall back to single-value params
+  const mediaPaths: string[] =
+    params.mediaPaths?.slice() ?? (params.mediaPath ? [params.mediaPath] : []);
+  const mediaTypes: string[] =
+    params.mediaTypes?.slice() ?? (params.mediaType ? [params.mediaType] : []);
+  let placeholder = params.placeholder;
   const enhanced = asEnhanced(params.dataMessage);
 
-  // ── Sticker processing ──
+  // ── Sticker processing (only when no regular attachments) ──
   let stickerInfo = "";
   const sticker = enhanced?.sticker;
   if (sticker && !deps.ignoreAttachments) {
     const stickerEmoji = sticker.emoji ? ` ${sticker.emoji}` : "";
     stickerInfo = `[Sticker${stickerEmoji}] `;
-    if (!mediaPath) {
-      // Check cache first (from pre-cache), avoiding double fetch
+    if (mediaPaths.length === 0) {
       const cached = await getCachedMedia(groupId, enhanced?.timestamp);
       if (cached) {
-        mediaPath = cached.path;
-        mediaType = cached.contentType ?? sticker.contentType ?? "image/webp";
+        mediaPaths.push(cached.path);
+        mediaTypes.push(cached.contentType ?? sticker.contentType ?? "image/webp");
       } else {
         const fetched = await fetchStickerMedia({ sticker, senderRecipient, groupId, deps });
         if (fetched) {
-          mediaPath = fetched.path;
-          mediaType = fetched.contentType ?? sticker.contentType ?? "image/webp";
+          const ct = fetched.contentType ?? sticker.contentType ?? "image/webp";
+          mediaPaths.push(fetched.path);
+          mediaTypes.push(ct);
           await cacheMedia(groupId, enhanced?.timestamp, {
-            path: mediaPath,
-            contentType: mediaType,
+            path: fetched.path,
+            contentType: ct,
           });
         }
       }
@@ -631,7 +649,7 @@ export async function buildEnhancedMessage(params: {
       );
 
       // Fetch quoted media if we don't already have media
-      if (!mediaPath && !quotedMediaPath) {
+      if (mediaPaths.length === 0 && !quotedMediaPath) {
         const quoteTimestamp = typeof quote.id === "number" ? quote.id : undefined;
         const cached = await getCachedMedia(groupId, quoteTimestamp);
         if (cached) {
@@ -653,18 +671,29 @@ export async function buildEnhancedMessage(params: {
   }
 
   // ── Rebuild placeholder with sticker/quoted media awareness ──
-  const effectiveMediaType = mediaType ?? quotedMediaType;
-  const kind = mediaKindFromMime(effectiveMediaType ?? undefined);
-  if (kind) {
-    placeholder = `<media:${kind}>`;
-  } else if (enhanced?.attachments?.length || sticker) {
-    placeholder = "<media:attachment>";
+  if (mediaPaths.length > 1) {
+    placeholder = mediaTypes
+      .map((t) => {
+        const k = mediaKindFromMime(t);
+        return k ? `<media:${k}>` : "<media:attachment>";
+      })
+      .join(" ");
+  } else {
+    const effectiveMediaType = mediaTypes[0] ?? quotedMediaType;
+    const kind = mediaKindFromMime(effectiveMediaType ?? undefined);
+    if (kind) {
+      placeholder = `<media:${kind}>`;
+    } else if (enhanced?.attachments?.length || sticker) {
+      placeholder = "<media:attachment>";
+    }
   }
 
   // Use quoted media if no direct media
-  if (!mediaPath && quotedMediaPath) {
-    mediaPath = quotedMediaPath;
-    mediaType = quotedMediaType;
+  if (mediaPaths.length === 0 && quotedMediaPath) {
+    mediaPaths.push(quotedMediaPath);
+    if (quotedMediaType) {
+      mediaTypes.push(quotedMediaType);
+    }
   }
 
   // ── Assemble body text ──
@@ -674,7 +703,14 @@ export async function buildEnhancedMessage(params: {
   const bodyText =
     quotePrefix + stickerInfo + (cleanedMessageText || placeholder || fallbackQuoteText);
 
-  return { bodyText, mediaPath, mediaType, placeholder };
+  return {
+    bodyText,
+    mediaPath: mediaPaths[0],
+    mediaType: mediaTypes[0],
+    mediaPaths: mediaPaths.length > 0 ? mediaPaths : undefined,
+    mediaTypes: mediaTypes.length > 0 ? mediaTypes : undefined,
+    placeholder,
+  };
 }
 
 /**

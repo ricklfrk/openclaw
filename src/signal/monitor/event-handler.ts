@@ -86,6 +86,8 @@ export function createSignalEventHandler(
     messageId?: string;
     mediaPath?: string;
     mediaType?: string;
+    mediaPaths?: string[];
+    mediaTypes?: string[];
     commandAuthorized: boolean;
     wasMentioned?: boolean;
   };
@@ -185,6 +187,9 @@ export function createSignalEventHandler(
       MediaPath: entry.mediaPath,
       MediaType: entry.mediaType,
       MediaUrl: entry.mediaPath,
+      MediaPaths: entry.mediaPaths,
+      MediaUrls: entry.mediaPaths,
+      MediaTypes: entry.mediaTypes,
       WasMentioned: entry.isGroup ? entry.wasMentioned === true : undefined,
       CommandAuthorized: entry.commandAuthorized,
       OriginatingChannel: "signal" as const,
@@ -306,7 +311,7 @@ export function createSignalEventHandler(
       if (!entry.bodyText.trim()) {
         return false;
       }
-      if (entry.mediaPath || entry.mediaType) {
+      if (entry.mediaPath || entry.mediaType || entry.mediaPaths?.length) {
         return false;
       }
       return !hasControlCommand(entry.bodyText, deps.cfg);
@@ -332,6 +337,8 @@ export function createSignalEventHandler(
         bodyText: combinedText,
         mediaPath: undefined,
         mediaType: undefined,
+        mediaPaths: undefined,
+        mediaTypes: undefined,
       });
     },
     onError: (err) => {
@@ -644,14 +651,15 @@ export function createSignalEventHandler(
         if (!dataMessage.attachments?.length) {
           return "";
         }
-        // When we're skipping a message we intentionally avoid downloading attachments.
-        // Still record a useful placeholder for pending-history context.
         if (deps.ignoreAttachments) {
           return "<media:attachment>";
         }
-        const firstContentType = dataMessage.attachments?.[0]?.contentType;
-        const pendingKind = mediaKindFromMime(firstContentType ?? undefined);
-        return pendingKind ? `<media:${pendingKind}>` : "<media:attachment>";
+        return dataMessage.attachments
+          .map((att) => {
+            const k = mediaKindFromMime(att.contentType ?? undefined);
+            return k ? `<media:${k}>` : "<media:attachment>";
+          })
+          .join(" ");
       })();
       const pendingBodyText = messageText || pendingPlaceholder || quoteText;
       const historyKey = groupId ?? "unknown";
@@ -670,34 +678,49 @@ export function createSignalEventHandler(
       return;
     }
 
-    let mediaPath: string | undefined;
-    let mediaType: string | undefined;
+    const mediaPaths: string[] = [];
+    const mediaTypes: string[] = [];
     let placeholder = "";
-    const firstAttachment = dataMessage.attachments?.[0];
-    if (firstAttachment?.id && !deps.ignoreAttachments) {
-      try {
-        const fetched = await deps.fetchAttachment({
-          baseUrl: deps.baseUrl,
-          account: deps.account,
-          attachment: firstAttachment,
-          sender: senderRecipient,
-          groupId,
-          maxBytes: deps.mediaMaxBytes,
-        });
-        if (fetched) {
-          mediaPath = fetched.path;
-          mediaType = fetched.contentType ?? firstAttachment.contentType ?? undefined;
+    if (!deps.ignoreAttachments && dataMessage.attachments?.length) {
+      for (const att of dataMessage.attachments) {
+        if (!att.id) {
+          continue;
         }
-      } catch (err) {
-        deps.runtime.error?.(danger(`attachment fetch failed: ${String(err)}`));
+        try {
+          const fetched = await deps.fetchAttachment({
+            baseUrl: deps.baseUrl,
+            account: deps.account,
+            attachment: att,
+            sender: senderRecipient,
+            groupId,
+            maxBytes: deps.mediaMaxBytes,
+          });
+          if (fetched) {
+            mediaPaths.push(fetched.path);
+            mediaTypes.push(fetched.contentType ?? att.contentType ?? "application/octet-stream");
+          }
+        } catch (err) {
+          deps.runtime.error?.(danger(`attachment fetch failed: ${String(err)}`));
+        }
       }
     }
+    let mediaPath: string | undefined = mediaPaths[0];
+    let mediaType: string | undefined = mediaTypes[0];
 
-    const kind = mediaKindFromMime(mediaType ?? undefined);
-    if (kind) {
-      placeholder = `<media:${kind}>`;
-    } else if (dataMessage.attachments?.length) {
-      placeholder = "<media:attachment>";
+    if (mediaPaths.length > 1) {
+      placeholder = mediaTypes
+        .map((t) => {
+          const k = mediaKindFromMime(t);
+          return k ? `<media:${k}>` : "<media:attachment>";
+        })
+        .join(" ");
+    } else {
+      const kind = mediaKindFromMime(mediaType ?? undefined);
+      if (kind) {
+        placeholder = `<media:${kind}>`;
+      } else if (dataMessage.attachments?.length) {
+        placeholder = "<media:attachment>";
+      }
     }
 
     // Signal enhancements: sticker, quote, U+FFFC stripping, enhanced bodyText
@@ -708,15 +731,23 @@ export function createSignalEventHandler(
         messageText,
         mediaPath,
         mediaType,
+        mediaPaths: mediaPaths.length > 0 ? mediaPaths : undefined,
+        mediaTypes: mediaTypes.length > 0 ? mediaTypes : undefined,
         placeholder,
         senderRecipient,
         groupId,
         deps: eDeps,
       });
       bodyText = enhanced.bodyText;
-      if (enhanced.mediaPath) {
-        mediaPath = enhanced.mediaPath;
-        mediaType = enhanced.mediaType;
+      mediaPath = enhanced.mediaPath;
+      mediaType = enhanced.mediaType;
+      mediaPaths.length = 0;
+      if (enhanced.mediaPaths) {
+        mediaPaths.push(...enhanced.mediaPaths);
+      }
+      mediaTypes.length = 0;
+      if (enhanced.mediaTypes) {
+        mediaTypes.push(...enhanced.mediaTypes);
       }
       placeholder = enhanced.placeholder;
     } else {
@@ -768,6 +799,8 @@ export function createSignalEventHandler(
       messageId,
       mediaPath,
       mediaType,
+      mediaPaths: mediaPaths.length > 0 ? mediaPaths : undefined,
+      mediaTypes: mediaTypes.length > 0 ? mediaTypes : undefined,
       commandAuthorized,
       wasMentioned: effectiveWasMentioned,
     });
