@@ -9,6 +9,7 @@
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { isSilentReplyText } from "../../../auto-reply/tokens.js";
 import { extractAssistantText } from "../../pi-embedded-utils.js";
+import { log } from "../logger.js";
 
 const MIN_TEXT_LENGTH = 20;
 const MAX_RETRIES = 3;
@@ -48,6 +49,13 @@ export function checkNonConformingOutput(params: {
   didSendViaMessagingTool: boolean;
   lastAssistant: AssistantMessage | undefined;
 }): NonConformingResult {
+  log.info(
+    `[non-conforming-check] enforceFinalTag=${params.enforceFinalTag} aborted=${params.aborted} ` +
+      `timedOut=${params.timedOut} assistantTexts=${params.assistantTexts.length} ` +
+      `didSendViaTool=${params.didSendViaMessagingTool} ` +
+      `stopReason=${params.lastAssistant?.stopReason} retryCount=${params.retryCount}`,
+  );
+
   if (
     !params.enforceFinalTag ||
     params.aborted ||
@@ -61,6 +69,7 @@ export function checkNonConformingOutput(params: {
 
   const rawText = extractAssistantText(params.lastAssistant).trim();
   if (rawText.length <= MIN_TEXT_LENGTH || isSilentReplyText(rawText)) {
+    log.info(`[non-conforming-check] skipped: rawText too short (${rawText.length}) or silent`);
     return null;
   }
 

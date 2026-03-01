@@ -284,10 +284,21 @@ export function handleMessageEnd(
     rawThinking: extractAssistantThinking(assistantMessage),
   });
 
+  const strippedText = ctx.stripBlockTags(rawTextWithTags, { thinking: false, final: false });
   const text = resolveSilentReplyFallbackText({
-    text: ctx.stripBlockTags(rawTextWithTags, { thinking: false, final: false }),
+    text: strippedText,
     messagingToolSentTexts: ctx.state.messagingToolSentTexts,
   });
+
+  // Diagnostic: trace text extraction pipeline for enforceFinalTag debugging
+  if (ctx.params.enforceFinalTag) {
+    ctx.log.warn(
+      `[msg-end-diag] rawTextWithTags(${rawTextWithTags.length}ch)="${rawTextWithTags.slice(0, 80)}" ` +
+        `stripped(${strippedText.length}ch)="${strippedText.slice(0, 80)}" ` +
+        `text(${text.length}ch)="${text.slice(0, 80)}" ` +
+        `stopReason=${(assistantMessage as { stopReason?: string }).stopReason}`,
+    );
+  }
   const rawThinking =
     ctx.state.includeReasoning || ctx.state.streamReasoning
       ? extractAssistantThinking(assistantMessage) || extractThinkingFromTaggedText(rawText)
@@ -336,12 +347,30 @@ export function handleMessageEnd(
     ctx.state.emittedAssistantUpdate = true;
   }
 
+  // When onBlockReply is absent, the chunker won't be drained in the block
+  // reply section below. Drain it here so assistantTexts is always populated
+  // with the extracted text — without this, enforceFinalTag runs can lose
+  // the reply entirely when block streaming is active but onBlockReply is not set.
+  if (!ctx.params.onBlockReply && ctx.blockChunker?.hasBuffered()) {
+    ctx.blockChunker.drain({ force: true, emit: ctx.emitBlockChunk });
+    ctx.blockChunker.reset();
+  }
+
   const addedDuringMessage = ctx.state.assistantTexts.length > ctx.state.assistantTextBaseline;
   const chunkerHasBuffered = ctx.blockChunker?.hasBuffered() ?? false;
   // Use cleanedText (which includes fallback) instead of raw stripBlockTags result
   // so assistantTexts is populated even when enforceFinalTag mode returns empty.
   const finalText = cleanedText || text;
   ctx.finalizeAssistantTexts({ text: finalText, addedDuringMessage, chunkerHasBuffered });
+
+  // Diagnostic: trace finalizeAssistantTexts outcome
+  if (ctx.params.enforceFinalTag) {
+    ctx.log.warn(
+      `[msg-end-diag] cleanedText(${cleanedText.length}ch) finalText(${finalText.length}ch) ` +
+        `addedDuringMsg=${addedDuringMessage} chunkerBuf=${chunkerHasBuffered} ` +
+        `assistantTexts=${ctx.state.assistantTexts.length} baseline=${ctx.state.assistantTextBaseline}`,
+    );
+  }
 
   const onBlockReply = ctx.params.onBlockReply;
   const shouldEmitReasoning = Boolean(
