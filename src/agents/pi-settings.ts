@@ -2,14 +2,22 @@ import type { OpenClawConfig } from "../config/config.js";
 
 export const DEFAULT_PI_COMPACTION_RESERVE_TOKENS_FLOOR = 20_000;
 
+type PiRetryOverrides = {
+  enabled?: boolean;
+  maxRetries?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+};
+
 type PiSettingsManagerLike = {
   getCompactionReserveTokens: () => number;
   getCompactionKeepRecentTokens: () => number;
   applyOverrides: (overrides: {
-    compaction: {
+    compaction?: {
       reserveTokens?: number;
       keepRecentTokens?: number;
     };
+    retry?: PiRetryOverrides;
   }) => void;
 };
 
@@ -94,4 +102,32 @@ export function applyPiCompactionSettingsFromConfig(params: {
       keepRecentTokens: targetKeepRecentTokens,
     },
   };
+}
+
+export function applyPiRetrySettingsFromConfig(params: {
+  settingsManager: PiSettingsManagerLike;
+  cfg?: OpenClawConfig;
+}): boolean {
+  const retryCfg = params.cfg?.agents?.defaults?.retry;
+  if (!retryCfg) {
+    return false;
+  }
+  const overrides: PiRetryOverrides = {};
+  if (typeof retryCfg.enabled === "boolean") {
+    overrides.enabled = retryCfg.enabled;
+  }
+  if (typeof retryCfg.maxRetries === "number" && Number.isFinite(retryCfg.maxRetries)) {
+    overrides.maxRetries = Math.floor(retryCfg.maxRetries);
+  }
+  if (typeof retryCfg.baseDelayMs === "number" && Number.isFinite(retryCfg.baseDelayMs)) {
+    overrides.baseDelayMs = Math.floor(retryCfg.baseDelayMs);
+  }
+  if (typeof retryCfg.maxDelayMs === "number" && Number.isFinite(retryCfg.maxDelayMs)) {
+    overrides.maxDelayMs = Math.floor(retryCfg.maxDelayMs);
+  }
+  if (Object.keys(overrides).length === 0) {
+    return false;
+  }
+  params.settingsManager.applyOverrides({ retry: overrides });
+  return true;
 }
