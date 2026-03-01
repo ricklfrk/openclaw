@@ -4,8 +4,10 @@ import type { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type { ThinkLevel } from "../../../auto-reply/thinking.js";
 import type { SessionSystemPromptReport } from "../../../config/sessions/types.js";
 import type { PluginHookBeforeAgentStartResult } from "../../../plugins/types.js";
+import type { AuthProfileStore } from "../../auth-profiles/types.js";
 import type { MessagingToolSend } from "../../pi-embedded-messaging.js";
 import type { NormalizedUsage } from "../../usage.js";
+import type { KeyRotationState } from "../stream-key-rotation.js";
 import type { RunEmbeddedPiAgentParams } from "./params.js";
 
 type EmbeddedRunAttemptBase = Omit<
@@ -21,6 +23,14 @@ export type EmbeddedRunAttemptParams = EmbeddedRunAttemptBase & {
   modelRegistry: ModelRegistry;
   thinkLevel: ThinkLevel;
   legacyBeforeAgentStartResult?: PluginHookBeforeAgentStartResult;
+  /** Key rotation state shared with run.ts for per-turn API key rotation. */
+  keyRotationState?: KeyRotationState;
+  /** Ordered list of auth profile candidates for key rotation. */
+  keyRotationCandidates?: Array<string | undefined>;
+  /** Auth profile store for key rotation stamping/failure tracking. */
+  keyRotationAuthStore?: AuthProfileStore;
+  /** Resolver for API keys given a profile candidate. */
+  keyRotationResolveApiKey?: (candidate: string | undefined) => Promise<string | undefined>;
 };
 
 export type EmbeddedRunAttemptResult = {

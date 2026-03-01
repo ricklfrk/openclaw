@@ -1,4 +1,5 @@
 import type { OpenClawConfig } from "../config/config.js";
+import type { AgentRetryConfig } from "../config/types.agent-defaults.js";
 
 export const DEFAULT_PI_COMPACTION_RESERVE_TOKENS_FLOOR = 20_000;
 
@@ -104,11 +105,25 @@ export function applyPiCompactionSettingsFromConfig(params: {
   };
 }
 
+function resolveAgentRetryConfig(
+  cfg?: OpenClawConfig,
+  agentId?: string,
+): AgentRetryConfig | undefined {
+  const defaults = cfg?.agents?.defaults?.retry;
+  const agentEntry = agentId ? cfg?.agents?.list?.find((a) => a.id === agentId) : undefined;
+  const perAgent = agentEntry?.retry;
+  if (!defaults && !perAgent) {
+    return undefined;
+  }
+  return { ...defaults, ...perAgent };
+}
+
 export function applyPiRetrySettingsFromConfig(params: {
   settingsManager: PiSettingsManagerLike;
   cfg?: OpenClawConfig;
+  agentId?: string;
 }): boolean {
-  const retryCfg = params.cfg?.agents?.defaults?.retry;
+  const retryCfg = resolveAgentRetryConfig(params.cfg, params.agentId);
   if (!retryCfg) {
     return false;
   }

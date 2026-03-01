@@ -710,6 +710,15 @@ export const AgentEntrySchema = z
       })
       .strict()
       .optional(),
+    retry: z
+      .object({
+        enabled: z.boolean().optional(),
+        maxRetries: z.number().int().nonnegative().optional(),
+        baseDelayMs: z.number().int().positive().optional(),
+        maxDelayMs: z.number().int().nonnegative().optional(),
+      })
+      .strict()
+      .optional(),
     sandbox: AgentSandboxSchema,
     tools: AgentToolsSchema,
   })

@@ -59,6 +59,7 @@ import { runEmbeddedAttempt } from "./run/attempt.js";
 import { checkNonConformingOutput } from "./run/non-conforming-retry.js";
 import type { RunEmbeddedPiAgentParams } from "./run/params.js";
 import { buildEmbeddedRunPayloads } from "./run/payloads.js";
+import { createKeyRotationState } from "./stream-key-rotation.js";
 import {
   truncateOversizedToolResultsInSession,
   sessionLikelyHasOversizedToolResults,
@@ -543,6 +544,19 @@ export async function runEmbeddedPiAgent(
           agentDir,
         });
       };
+
+      // Per-turn API key rotation state: shared between the streamFn wrapper
+      // (inside prompt()) and this while-loop so the wrapper can signal when
+      // all keys are exhausted and the loop can throw FailoverError immediately.
+      const keyRotationState = createKeyRotationState();
+      keyRotationState.rotationIndex = profileIndex;
+      const keyRotationResolveApiKey = async (
+        candidate: string | undefined,
+      ): Promise<string | undefined> => {
+        const info = await resolveApiKeyForCandidate(candidate);
+        return info.apiKey;
+      };
+
       try {
         while (true) {
           if (runLoopIterations >= MAX_RUN_LOOP_ITERATIONS) {
@@ -640,7 +654,17 @@ export async function runEmbeddedPiAgent(
             streamParams: params.streamParams,
             ownerNumbers: params.ownerNumbers,
             enforceFinalTag: params.enforceFinalTag,
+            keyRotationState,
+            keyRotationCandidates: profileCandidates,
+            keyRotationAuthStore: authStore,
+            keyRotationResolveApiKey,
           });
+
+          // Sync rotation state back: if the wrapper used a different profile,
+          // attribute errors to the correct profile.
+          if (keyRotationState.lastProfileId) {
+            lastProfileId = keyRotationState.lastProfileId;
+          }
 
           const {
             aborted,
@@ -986,6 +1010,40 @@ export async function runEmbeddedPiAgent(
             log.warn(
               `Profile ${lastProfileId} rejected image payload${details ? ` (${details})` : ""}.`,
             );
+          }
+
+          // If the streamFn key-rotation wrapper already exhausted all profile keys
+          // on a rate-limit error, skip the normal rotate/retry path and immediately
+          // trigger model fallback (or fail) to avoid redundant retries.
+          if (keyRotationState.allKeysExhausted) {
+            if (fallbackConfigured) {
+              throw new FailoverError(
+                "All API key profiles exhausted due to rate limiting (429). Falling back to next model.",
+                {
+                  reason: "rate_limit",
+                  provider,
+                  model: modelId,
+                  profileId: lastProfileId,
+                  status: 429,
+                },
+              );
+            }
+            return {
+              payloads: [
+                {
+                  text: "All API keys are currently rate-limited. Please try again later.",
+                  isError: true,
+                },
+              ],
+              meta: {
+                durationMs: Date.now() - started,
+                agentMeta: { sessionId: sessionIdUsed, provider, model: model.id },
+                error: {
+                  kind: "retry_limit",
+                  message: "All profile keys exhausted due to rate limiting",
+                },
+              },
+            };
           }
 
           // Rotate on timeout to try another account/model path in this turn,

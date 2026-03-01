@@ -68,6 +68,7 @@ export function createPreparedEmbeddedPiSettingsManager(params: {
   cwd: string;
   agentDir: string;
   cfg?: OpenClawConfig;
+  agentId?: string;
 }): SettingsManager {
   const settingsManager = createEmbeddedPiSettingsManager(params);
   applyPiCompactionSettingsFromConfig({
@@ -77,6 +78,7 @@ export function createPreparedEmbeddedPiSettingsManager(params: {
   applyPiRetrySettingsFromConfig({
     settingsManager,
     cfg: params.cfg,
+    agentId: params.agentId,
   });
   return settingsManager;
 }

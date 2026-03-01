@@ -1,5 +1,5 @@
 import type { ChatType } from "../channels/chat-type.js";
-import type { AgentDefaultsConfig } from "./types.agent-defaults.js";
+import type { AgentDefaultsConfig, AgentRetryConfig } from "./types.agent-defaults.js";
 import type { AgentModelConfig, AgentSandboxConfig } from "./types.agents-shared.js";
 import type { HumanDelayConfig, IdentityConfig } from "./types.base.js";
 import type { GroupChatConfig } from "./types.messages.js";
@@ -27,6 +27,8 @@ export type AgentConfig = {
     /** Per-agent default model for spawned sub-agents (string or {primary,fallbacks}). */
     model?: AgentModelConfig;
   };
+  /** LLM retry settings (pi-agent-core transient-error retry). */
+  retry?: AgentRetryConfig;
   /** Optional per-agent sandbox overrides. */
   sandbox?: AgentSandboxConfig;
   /** Optional per-agent stream params (e.g. cacheRetention, temperature). */

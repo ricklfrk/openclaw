@@ -99,6 +99,7 @@ import {
 import { buildEmbeddedSandboxInfo } from "../sandbox-info.js";
 import { prewarmSessionFile, trackSessionManagerAccess } from "../session-manager-cache.js";
 import { prepareSessionManagerForRun } from "../session-manager-init.js";
+import { wrapStreamFnWithKeyRotation } from "../stream-key-rotation.js";
 import {
   applySystemPromptOverrideToSession,
   buildEmbeddedSystemPrompt,
@@ -759,6 +760,7 @@ export async function runEmbeddedAttempt(
         cwd: effectiveWorkspace,
         agentDir,
         cfg: params.config,
+        agentId: params.agentId,
       });
 
       // Sets compaction/pruning runtime state and returns extension factories
@@ -984,6 +986,22 @@ export async function runEmbeddedAttempt(
       // OAuth stream interruptions while downstream is processing.
       activeSession.agent.streamFn = wrapGoogleNonStreaming(activeSession.agent.streamFn);
       activeSession.agent.streamFn = wrapStreamFnWithBuffer(activeSession.agent.streamFn);
+
+      if (
+        params.keyRotationState &&
+        params.keyRotationCandidates &&
+        params.keyRotationAuthStore &&
+        params.keyRotationResolveApiKey
+      ) {
+        activeSession.agent.streamFn = wrapStreamFnWithKeyRotation({
+          streamFn: activeSession.agent.streamFn,
+          profileCandidates: params.keyRotationCandidates,
+          resolveApiKey: params.keyRotationResolveApiKey,
+          authStore: params.keyRotationAuthStore,
+          agentDir: params.agentDir,
+          rotationState: params.keyRotationState,
+        });
+      }
 
       try {
         const prior = await sanitizeSessionHistory({
