@@ -267,7 +267,11 @@ export function wrapGoogleNonStreaming(streamFn: StreamFn): StreamFn {
         if (candidate?.content?.parts) {
           for (const part of candidate.content.parts) {
             if (part.text !== undefined) {
-              const thinking = isThinkingPart(part);
+              // Gemini models sometimes emit thinking as a plain text part
+              // (thought !== true) with the raw prefix "think\n".  Reclassify
+              // these as thinking blocks so downstream filters handle them.
+              const bareThinkPrefix = /^think\s*\n/i;
+              const thinking = isThinkingPart(part) || bareThinkPrefix.test(part.text);
 
               if (thinking) {
                 const block: ThinkingContent = {

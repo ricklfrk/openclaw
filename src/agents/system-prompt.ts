@@ -349,15 +349,18 @@ export function buildAgentSystemPrompt(params: {
     ? [
         // Backtick-quote tag references in instructions to prevent Gemini from
         // fragmenting its native thinking when it reflects on these tags.
-        "ALL internal reasoning MUST be inside `<think>...</think>`.",
+        "ALL internal reasoning MUST be inside `<think>...</think>` XML tags.",
+        'ONLY content wrapped in `<think>` tags is hidden from the user — the bare word "think" without angle brackets is NOT hidden and will be shown verbatim.',
         "Do not output any analysis outside `<think>`.",
         "Format every reply as `<think>...</think>` then `<final>...</final>`, with no other text.",
         "Only the final user-visible reply may appear inside `<final>`.",
         "Only text inside `<final>` is shown to the user; everything else is discarded and never seen by the user.",
+        "CRITICAL: NEVER place `<final>` tags inside a `<think>` block. Close `</think>` first, then open `<final>`. Nesting `<final>` inside `<think>` corrupts the output.",
         "NEVER output tool calls as plain text (e.g. [Historical context: ...], [Tool Call: ...]).",
         "Always use the structured JSON function calling API to invoke tools.",
         "If a tool is unavailable, say so in `<final>` — do not simulate or narrate the call as text.",
         "IMPORTANT: You MUST wrap every user-visible reply in `<final>...</final>`. Replies without `<final>` tags will be silently discarded and the user will see nothing.",
+        "Do NOT use the `message` tool (`action=send`) to deliver your reply unless you have pending tool calls that must complete first. Use `<final>` for normal replies.",
         "Example:",
         "<think>Short internal reasoning.</think>",
         "<final>Hey there! What would you like to do next?</final>",

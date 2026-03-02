@@ -391,24 +391,55 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     const codeSpans = useCodeSpans ? buildCodeSpanIndex(repaired, inlineStateStart) : null;
 
     // 1. Handle <think> blocks (stateful, strip content inside)
-    let processed = "";
+    //
+    // Also handles orphaned </think> (close tag without a preceding open tag
+    // in the current chunk).  Gemini models sometimes split thinking across a
+    // structured `thinking` content block and a subsequent `text` block, so the
+    // text block starts mid-thought with no <think> but ends with </think>.
+    // In that case we strip everything up to and including the *last*
+    // orphaned </think> to prevent reasoning content from leaking.
+
+    // Pass 1: detect orphaned </think> tags (close without prior open)
+    let sawOpen = state.thinking;
+    let lastOrphanedCloseEnd = -1;
     THINKING_TAG_SCAN_RE.lastIndex = 0;
-    let lastIndex = 0;
-    let inThinking = state.thinking;
     for (const match of repaired.matchAll(THINKING_TAG_SCAN_RE)) {
       const idx = match.index ?? 0;
       if (codeSpans?.isInside(idx)) {
         continue;
       }
+      const isClose = match[1] === "/";
+      if (!isClose) {
+        sawOpen = true;
+      }
+      if (isClose && !sawOpen) {
+        lastOrphanedCloseEnd = idx + match[0].length;
+      }
+    }
+
+    // If orphaned </think> found, skip everything before it
+    const thinkInput = lastOrphanedCloseEnd > 0 ? repaired.slice(lastOrphanedCloseEnd) : repaired;
+    const thinkOffset = lastOrphanedCloseEnd > 0 ? lastOrphanedCloseEnd : 0;
+
+    // Pass 2: standard thinking tag processing on the effective input
+    let processed = "";
+    THINKING_TAG_SCAN_RE.lastIndex = 0;
+    let lastIndex = 0;
+    let inThinking = lastOrphanedCloseEnd > 0 ? false : state.thinking;
+    for (const match of thinkInput.matchAll(THINKING_TAG_SCAN_RE)) {
+      const idx = match.index ?? 0;
+      if (codeSpans?.isInside(idx + thinkOffset)) {
+        continue;
+      }
       if (!inThinking) {
-        processed += repaired.slice(lastIndex, idx);
+        processed += thinkInput.slice(lastIndex, idx);
       }
       const isClose = match[1] === "/";
       inThinking = !isClose;
       lastIndex = idx + match[0].length;
     }
     if (!inThinking) {
-      processed += repaired.slice(lastIndex);
+      processed += thinkInput.slice(lastIndex);
     }
     state.thinking = inThinking;
 
