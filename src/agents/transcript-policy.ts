@@ -16,6 +16,8 @@ export type TranscriptPolicy = {
   };
   sanitizeThinkingSignatures: boolean;
   dropThinkingBlocks: boolean;
+  /** "all" = drop from every message; "historical" = keep current tool loop (after last user msg) */
+  dropThinkingBlocksMode: "all" | "historical" | "off";
   applyGoogleTurnOrdering: boolean;
   validateGeminiTurns: boolean;
   validateAnthropicTurns: boolean;
@@ -95,12 +97,17 @@ export function resolveTranscriptPolicy(params: {
     modelId.toLowerCase().includes("gemini");
   const isCopilotClaude = provider === "github-copilot" && modelId.toLowerCase().includes("claude");
 
-  // Drop persisted `thinking` blocks from outbound history to save tokens and
-  // prevent the model from mimicking leaked thinking formats in follow-up turns.
-  // - Copilot/Claude: rejects non-binary/non-base64 thinkingSignatures.
-  // - Google: thinking blocks accumulate across turns, inflating context and
-  //   encouraging the model to reproduce bare "think\n" prefix patterns.
-  const dropThinkingBlocks = isCopilotClaude || isGoogle || isOpenRouterGemini;
+  // Drop `thinking` blocks from outbound history.
+  // - Copilot/Claude ("all"): rejects non-binary thinkingSignatures; drop everything.
+  // - Google/Gemini ("historical"): drop thinking from previous turns to save tokens
+  //   and prevent format mimicry, but keep the current tool loop's thinking so the
+  //   model retains its multi-step plan during tool continuations.
+  const dropThinkingBlocksMode: "all" | "historical" | "off" = isCopilotClaude
+    ? "all"
+    : isGoogle || isOpenRouterGemini
+      ? "historical"
+      : "off";
+  const dropThinkingBlocks = dropThinkingBlocksMode !== "off";
 
   const needsNonImageSanitize = isGoogle || isAnthropic || isMistral || isOpenRouterGemini;
 
@@ -126,6 +133,7 @@ export function resolveTranscriptPolicy(params: {
     sanitizeThoughtSignatures: isOpenAi ? undefined : sanitizeThoughtSignatures,
     sanitizeThinkingSignatures: false,
     dropThinkingBlocks,
+    dropThinkingBlocksMode,
     applyGoogleTurnOrdering: !isOpenAi && isGoogle,
     validateGeminiTurns: !isOpenAi && isGoogle,
     validateAnthropicTurns: !isOpenAi && (isAnthropic || isStrictOpenAiCompatible),
