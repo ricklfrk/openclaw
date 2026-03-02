@@ -381,6 +381,14 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     const repaired = repairMalformedReasoningTags(text);
     const inlineStateStart = state.inlineCode ?? createInlineCodeState();
 
+    // Bare "think\n" prefix: Gemini models sometimes emit internal reasoning
+    // as a plain text block starting with "think\n" (no XML tags). Transition
+    // to thinking mode so the standard pass-2 logic suppresses the content.
+    // If a </think> close tag appears later the regex loop will transition back.
+    if (!state.thinking && /^think\s*\n/i.test(repaired)) {
+      state.thinking = true;
+    }
+
     // Code-span detection: only used for the non-enforcement path where we
     // want to preserve literal <think>/<final> tags inside code blocks.
     // In enforcement mode we skip code-span detection for both <think> and
