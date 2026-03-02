@@ -352,6 +352,8 @@ export function splitThinkingTaggedText(text: string): ThinkTaggedSplitBlock[] |
   return blocks;
 }
 
+const BARE_THINK_PREFIX_RE = /^think\s*\n/i;
+
 export function promoteThinkingTagsToBlocks(message: AssistantMessage): void {
   if (!Array.isArray(message.content)) {
     return;
@@ -369,6 +371,16 @@ export function promoteThinkingTagsToBlocks(message: AssistantMessage): void {
       next.push(block);
       continue;
     }
+
+    // Gemini models sometimes emit thinking as a plain text block starting
+    // with bare "think\n" (no XML tags).  Reclassify the entire block as
+    // thinking so downstream extraction skips it.
+    if (BARE_THINK_PREFIX_RE.test(block.text)) {
+      changed = true;
+      next.push({ type: "thinking", thinking: block.text });
+      continue;
+    }
+
     const split = splitThinkingTaggedText(block.text);
     if (!split) {
       next.push(block);
