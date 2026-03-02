@@ -95,10 +95,12 @@ export function resolveTranscriptPolicy(params: {
     modelId.toLowerCase().includes("gemini");
   const isCopilotClaude = provider === "github-copilot" && modelId.toLowerCase().includes("claude");
 
-  // GitHub Copilot's Claude endpoints can reject persisted `thinking` blocks with
-  // non-binary/non-base64 signatures (e.g. thinkingSignature: "reasoning_text").
-  // Drop these blocks at send-time to keep sessions usable.
-  const dropThinkingBlocks = isCopilotClaude;
+  // Drop persisted `thinking` blocks from outbound history to save tokens and
+  // prevent the model from mimicking leaked thinking formats in follow-up turns.
+  // - Copilot/Claude: rejects non-binary/non-base64 thinkingSignatures.
+  // - Google: thinking blocks accumulate across turns, inflating context and
+  //   encouraging the model to reproduce bare "think\n" prefix patterns.
+  const dropThinkingBlocks = isCopilotClaude || isGoogle || isOpenRouterGemini;
 
   const needsNonImageSanitize = isGoogle || isAnthropic || isMistral || isOpenRouterGemini;
 
