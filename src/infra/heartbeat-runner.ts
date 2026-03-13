@@ -39,7 +39,9 @@ import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getQueueSize } from "../process/command-queue.js";
 import { CommandLane } from "../process/lanes.js";
 import {
+  buildAgentPeerSessionKey,
   normalizeAgentId,
+  normalizeMainKey,
   parseAgentSessionKey,
   toAgentStoreSessionKey,
 } from "../routing/session-key.js";
@@ -297,6 +299,29 @@ function resolveHeartbeatSession(
           store,
           entry: store[forcedCanonical],
         };
+      }
+    }
+  }
+
+  // When target is "last" and dmScope creates per-peer sessions, resolve the
+  // per-peer session key from the main entry's last delivery route so the
+  // heartbeat agent loads the correct conversation transcript.
+  if (heartbeat?.target === "last" && mainEntry) {
+    const dmScope = sessionCfg?.dmScope ?? "main";
+    if (dmScope !== "main" && mainEntry.lastChannel && mainEntry.lastTo) {
+      const peerSessionKey = buildAgentPeerSessionKey({
+        agentId: resolvedAgentId,
+        mainKey: normalizeMainKey(sessionCfg?.mainKey),
+        channel: mainEntry.lastChannel,
+        accountId: mainEntry.lastAccountId,
+        peerKind: "direct",
+        peerId: mainEntry.lastTo,
+        dmScope,
+        identityLinks: sessionCfg?.identityLinks,
+      });
+      const peerEntry = store[peerSessionKey];
+      if (peerEntry) {
+        return { sessionKey: peerSessionKey, storePath, store, entry: peerEntry };
       }
     }
   }
