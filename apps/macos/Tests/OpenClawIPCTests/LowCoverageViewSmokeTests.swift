@@ -52,7 +52,8 @@ struct LowCoverageViewSmokeTests {
             stream: "tool",
             ts: Date().timeIntervalSince1970 * 1000,
             data: ["phase": AnyCodable("start"), "name": AnyCodable("test")],
-            summary: nil)
+            summary: nil,
+            sessionKey: nil)
         AgentEventStore.shared.append(sample)
         _ = AgentEventsWindow().body
         AgentEventStore.shared.clear()

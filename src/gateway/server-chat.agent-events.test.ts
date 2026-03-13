@@ -538,7 +538,7 @@ describe("agent event handler", () => {
     resetAgentRunContextForTest();
   });
 
-  it("routes tool events only to registered recipients when verbose is enabled", () => {
+  it("broadcasts tool events to all WS clients and registered recipients", () => {
     const { broadcast, broadcastToConnIds, toolEventRecipients, handler } = createHarness({
       resolveSessionKeyForRun: () => "session-1",
     });
@@ -554,12 +554,12 @@ describe("agent event handler", () => {
       data: { phase: "start", name: "read", toolCallId: "t1" },
     });
 
-    expect(broadcast).not.toHaveBeenCalled();
+    expect(broadcast).toHaveBeenCalledTimes(1);
     expect(broadcastToConnIds).toHaveBeenCalledTimes(1);
     resetAgentRunContextForTest();
   });
 
-  it("broadcasts tool events to WS recipients even when verbose is off, but skips node send", () => {
+  it("broadcasts tool events to WS recipients and node subscribers even when verbose is off", () => {
     const { broadcastToConnIds, nodeSendToSession, toolEventRecipients, handler } = createHarness({
       resolveSessionKeyForRun: () => "session-1",
     });
@@ -577,9 +577,9 @@ describe("agent event handler", () => {
 
     // Tool events always broadcast to registered WS recipients
     expect(broadcastToConnIds).toHaveBeenCalledTimes(1);
-    // But node/channel subscribers should NOT receive when verbose is off
+    // Node subscribers (Mac app / control UI) always receive tool events
     const nodeToolCalls = nodeSendToSession.mock.calls.filter(([, event]) => event === "agent");
-    expect(nodeToolCalls).toHaveLength(0);
+    expect(nodeToolCalls).toHaveLength(1);
     resetAgentRunContextForTest();
   });
 

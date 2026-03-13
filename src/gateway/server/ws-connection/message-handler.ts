@@ -36,6 +36,7 @@ import { normalizeDeviceMetadataForAuth } from "../../device-auth.js";
 import {
   isLocalishHost,
   isLoopbackAddress,
+  isPrivateOrLoopbackAddress,
   isTrustedProxyAddress,
   resolveClientIp,
 } from "../../net.js";
@@ -97,6 +98,21 @@ import { isUnauthorizedRoleError, UnauthorizedFloodGuard } from "./unauthorized-
 type SubsystemLogger = ReturnType<typeof createSubsystemLogger>;
 
 const DEVICE_SIGNATURE_SKEW_MS = 2 * 60 * 1000;
+
+/** Parse default agent id from WebSocket request URL query (?agent=...). Used by clients like Paperclip. */
+function parseDefaultAgentIdFromWsUrl(req: IncomingMessage): string | undefined {
+  const raw = req.url?.trim();
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    const url = new URL(raw, "http://localhost");
+    const agent = url.searchParams.get("agent")?.trim();
+    return agent || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export type WsOriginCheckMetrics = {
   hostHeaderFallbackAccepted: number;
@@ -218,6 +234,7 @@ export function attachGatewayWsMessageHandler(params: {
   const hasUntrustedProxyHeaders = hasProxyHeaders && !remoteIsTrustedProxy;
   const hostIsLocalish = isLocalishHost(requestHost);
   const isLocalClient = isLocalDirectRequest(upgradeReq, trustedProxies, allowRealIpFallback);
+  const isPrivateNetworkClient = !isLocalClient && isPrivateOrLoopbackAddress(clientIp);
   const reportedClientIp =
     isLocalClient || hasUntrustedProxyHeaders
       ? undefined
@@ -525,6 +542,7 @@ export function attachGatewayWsMessageHandler(params: {
             authOk,
             hasSharedAuth,
             isLocalClient,
+            isPrivateNetworkClient,
           });
           // Shared token/password auth can bypass pairing for trusted operators, but
           // device-less backend clients must not self-declare scopes. Control UI
@@ -538,7 +556,7 @@ export function attachGatewayWsMessageHandler(params: {
 
           if (decision.kind === "reject-control-ui-insecure-auth") {
             const errorMessage =
-              "control ui requires device identity (use HTTPS or localhost secure context)";
+              "control ui requires device identity (use HTTPS, localhost, or set allowInsecureAuth for private networks)";
             markHandshakeFailure("control-ui-insecure-auth", {
               insecureAuthConfigured: controlUiAuthPolicy.allowInsecureAuthConfigured,
             });
@@ -970,6 +988,7 @@ export function attachGatewayWsMessageHandler(params: {
         };
 
         clearHandshakeTimer();
+        const defaultAgentIdFromUrl = parseDefaultAgentIdFromWsUrl(upgradeReq);
         const nextClient: GatewayWsClient = {
           socket,
           connect: connectParams,
@@ -979,6 +998,7 @@ export function attachGatewayWsMessageHandler(params: {
           canvasHostUrl,
           canvasCapability,
           canvasCapabilityExpiresAtMs,
+          defaultAgentIdFromUrl,
         };
         setSocketMaxPayload(socket, MAX_PAYLOAD_BYTES);
         setClient(nextClient);

@@ -16,7 +16,8 @@ struct AgentEventStoreTests {
             stream: "test",
             ts: 0,
             data: [:] as [String: OpenClawProtocol.AnyCodable],
-            summary: nil))
+            summary: nil,
+            sessionKey: nil))
         #expect(store.events.count == 1)
 
         store.clear()
@@ -33,7 +34,8 @@ struct AgentEventStoreTests {
                 stream: "test",
                 ts: Double(i),
                 data: [:] as [String: OpenClawProtocol.AnyCodable],
-                summary: nil))
+                summary: nil,
+                sessionKey: nil))
         }
 
         #expect(store.events.count == 400)

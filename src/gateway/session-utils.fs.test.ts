@@ -138,6 +138,27 @@ describe("readFirstUserMessageFromTranscript", () => {
     expect(result).toBe("Real user message");
   });
 
+  test("skips internal-system retry user messages", () => {
+    const sessionId = "test-session-internal-retry";
+    const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
+    const lines = [
+      JSON.stringify({
+        message: {
+          role: "user",
+          content: "Continue where you left off. The previous model attempt failed or timed out.",
+          provenance: { kind: "internal_system", sourceTool: "model_fallback" },
+        },
+      }),
+      JSON.stringify({
+        message: { role: "user", content: "Real user message" },
+      }),
+    ];
+    fs.writeFileSync(transcriptPath, lines.join("\n"), "utf-8");
+
+    const result = readFirstUserMessageFromTranscript(sessionId, storePath);
+    expect(result).toBe("Real user message");
+  });
+
   test("returns null when no user messages exist", () => {
     const sessionId = "test-session-4";
     const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
@@ -237,6 +258,25 @@ describe("readLastMessagePreviewFromTranscript", () => {
 
     const result = readLastMessagePreviewFromTranscript(sessionId, storePath);
     expect(result).toBe("Real last");
+  });
+
+  test("skips internal-system retry user messages for last preview", () => {
+    const sessionId = "test-last-skip-internal-retry";
+    const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
+    const lines = [
+      JSON.stringify({ message: { role: "assistant", content: "Real assistant reply" } }),
+      JSON.stringify({
+        message: {
+          role: "user",
+          content: "Continue where you left off. The previous model attempt failed or timed out.",
+          provenance: { kind: "internal_system", sourceTool: "model_fallback" },
+        },
+      }),
+    ];
+    fs.writeFileSync(transcriptPath, lines.join("\n"), "utf-8");
+
+    const result = readLastMessagePreviewFromTranscript(sessionId, storePath);
+    expect(result).toBe("Real assistant reply");
   });
 
   test("returns null when no user/assistant messages exist", () => {
@@ -553,6 +593,36 @@ describe("readSessionMessages", () => {
       expect(out).toEqual([testCase.message]);
     }
   });
+
+  test("filters internal retry and legacy non-conforming retry user messages", () => {
+    const sessionId = "test-session-filter-internal-retry";
+    const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
+    const lines = [
+      JSON.stringify({
+        message: {
+          role: "user",
+          content: "Continue where you left off. The previous model attempt failed or timed out.",
+          provenance: { kind: "internal_system", sourceTool: "model_fallback" },
+        },
+      }),
+      JSON.stringify({
+        message: {
+          role: "user",
+          content:
+            "[System: Your previous reply was not delivered because it was not wrapped in `<final>` tags. Only content inside `<final>...</final>` reaches the user.\n\nQuick reminder:\n- Internal reasoning → `<think>...</think>`\n- User-visible reply → `<final>...</final>`\n- `</think>` must come before `<final>`.\n\nExample: <think>reasoning</think> <final>reply here</final>\n\nIf you need to call a tool, use native function calling (not text, use the native function calling mechanism (structured functionCall)). If you are ready to reply, please wrap it in `<final>` tags.]",
+        },
+      }),
+      JSON.stringify({ message: { role: "user", content: "Real user message" } }),
+      JSON.stringify({ message: { role: "assistant", content: "Real assistant reply" } }),
+    ];
+    fs.writeFileSync(transcriptPath, lines.join("\n"), "utf-8");
+
+    const out = readSessionMessages(sessionId, storePath);
+    expect(out).toEqual([
+      { role: "user", content: "Real user message" },
+      { role: "assistant", content: "Real assistant reply" },
+    ]);
+  });
 });
 
 describe("readSessionPreviewItemsFromTranscript", () => {
@@ -588,6 +658,23 @@ describe("readSessionPreviewItemsFromTranscript", () => {
 
     expect(result.map((item) => item.role)).toEqual(["assistant", "tool", "assistant"]);
     expect(result[1]?.text).toContain("call weather");
+  });
+
+  test("skips internal retry user messages in preview items", () => {
+    const sessionId = "preview-session-skip-internal";
+    writeTranscriptLines(sessionId, [
+      JSON.stringify({ message: { role: "assistant", content: "Stable assistant reply" } }),
+      JSON.stringify({
+        message: {
+          role: "user",
+          content: "Continue where you left off. The previous model attempt failed or timed out.",
+          provenance: { kind: "internal_system", sourceTool: "model_fallback" },
+        },
+      }),
+    ]);
+
+    const result = readPreview(sessionId, 2);
+    expect(result).toEqual([{ role: "assistant", text: "Stable assistant reply" }]);
   });
 
   test("detects tool calls from tool_use/tool_call blocks and toolName field", () => {

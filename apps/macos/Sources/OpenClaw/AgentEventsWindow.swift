@@ -102,7 +102,8 @@ struct AgentEventsWindow_Previews: PreviewProvider {
                 "phase": OpenClawProtocol.AnyCodable("start"),
                 "name": OpenClawProtocol.AnyCodable("bash"),
             ],
-            summary: nil)
+            summary: nil,
+            sessionKey: nil)
         AgentEventStore.shared.append(sample)
         return AgentEventsWindow()
     }

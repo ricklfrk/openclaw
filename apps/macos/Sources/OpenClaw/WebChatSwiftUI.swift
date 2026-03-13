@@ -235,7 +235,8 @@ final class WebChatSwiftUIWindowController {
         self.hosting = NSHostingController(rootView: OpenClawChatView(
             viewModel: vm,
             showsSessionSwitcher: true,
-            userAccent: accent))
+            userAccent: accent,
+            showsAssistantTrace: true))
         self.contentController = Self.makeContentController(for: presentation, hosting: self.hosting)
         self.window = Self.makeWindow(for: presentation, contentViewController: self.contentController)
     }

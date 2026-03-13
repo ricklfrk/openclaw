@@ -887,7 +887,11 @@ public final class OpenClawChatViewModel {
     }
 
     private func handleAgentEvent(_ evt: OpenClawAgentEventPayload) {
-        if let sessionId, evt.runId != sessionId {
+        let isOurRun = self.pendingRuns.contains(evt.runId)
+        if let sessionKey = evt.sessionKey,
+           !Self.matchesCurrentSessionKey(incoming: sessionKey, current: self.sessionKey),
+           !isOurRun
+        {
             return
         }
 

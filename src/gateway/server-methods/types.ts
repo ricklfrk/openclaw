@@ -21,6 +21,8 @@ export type GatewayClient = {
   canvasHostUrl?: string;
   canvasCapability?: string;
   canvasCapabilityExpiresAtMs?: number;
+  /** Default agent id from WebSocket URL query (?agent=...), used when request omits agentId. */
+  defaultAgentIdFromUrl?: string;
 };
 
 export type RespondFn = (

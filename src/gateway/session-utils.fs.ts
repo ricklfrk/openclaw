@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isNonConformingRetryPrompt } from "../agents/pi-embedded-runner/run/non-conforming-retry.js";
 import {
   formatSessionArchiveTimestamp,
   parseSessionArchiveTimestamp,
@@ -11,7 +12,10 @@ import {
 } from "../config/sessions.js";
 import { resolveRequiredHomeDir } from "../infra/home-dir.js";
 import { jsonUtf8Bytes } from "../infra/json-utf8-bytes.js";
-import { hasInterSessionUserProvenance } from "../sessions/input-provenance.js";
+import {
+  hasInternalSystemUserProvenance,
+  hasInterSessionUserProvenance,
+} from "../sessions/input-provenance.js";
 import { stripInlineDirectiveTagsForDisplay } from "../utils/directive-tags.js";
 import { extractToolCallNames, hasToolCall } from "../utils/transcript-tools.js";
 import { stripEnvelope } from "./chat-sanitize.js";
@@ -92,7 +96,11 @@ export function readSessionMessages(
     try {
       const parsed = JSON.parse(line);
       if (parsed?.message) {
-        messages.push(parsed.message);
+        const message = parsed.message as TranscriptMessage;
+        if (shouldHideTranscriptUserMessage(message)) {
+          continue;
+        }
+        messages.push(message);
         continue;
       }
 
@@ -292,6 +300,19 @@ type TranscriptMessage = {
   provenance?: unknown;
 };
 
+function shouldHideTranscriptUserMessage(
+  message: TranscriptMessage | TranscriptPreviewMessage | undefined,
+): boolean {
+  if (!message || message.role !== "user") {
+    return false;
+  }
+  if (hasInternalSystemUserProvenance(message)) {
+    return true;
+  }
+  const text = extractPreviewText(message as TranscriptPreviewMessage);
+  return isNonConformingRetryPrompt(text);
+}
+
 export function readSessionTitleFieldsFromTranscript(
   sessionId: string,
   storePath: string | undefined,
@@ -410,6 +431,9 @@ function extractFirstUserMessageFromTranscriptChunk(
       if (msg?.role !== "user") {
         continue;
       }
+      if (shouldHideTranscriptUserMessage(msg)) {
+        continue;
+      }
       if (opts?.includeInterSession !== true && hasInterSessionUserProvenance(msg)) {
         continue;
       }
@@ -494,6 +518,9 @@ function readLastMessagePreviewFromOpenTranscript(params: {
       if (msg?.role !== "user" && msg?.role !== "assistant") {
         continue;
       }
+      if (shouldHideTranscriptUserMessage(msg)) {
+        continue;
+      }
       const text = extractTextFromContent(msg.content);
       if (text) {
         return text;
@@ -539,6 +566,7 @@ type TranscriptPreviewMessage = {
   role?: string;
   content?: string | TranscriptContentEntry[];
   text?: string;
+  provenance?: unknown;
   toolName?: string;
   tool_name?: string;
 };
@@ -624,6 +652,9 @@ function buildPreviewItems(
   for (const message of messages) {
     const toolCall = isToolCall(message);
     const role = normalizeRole(message.role, toolCall);
+    if (shouldHideTranscriptUserMessage(message)) {
+      continue;
+    }
     let text = extractPreviewText(message);
     if (!text) {
       const toolNames = extractToolNames(message);

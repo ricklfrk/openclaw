@@ -276,6 +276,7 @@ public struct OpenClawAgentEventPayload: Codable, Sendable, Identifiable {
     public let stream: String
     public let ts: Int?
     public let data: [String: AnyCodable]
+    public let sessionKey: String?
 }
 
 public struct OpenClawChatPendingToolCall: Identifiable, Hashable, Sendable {
