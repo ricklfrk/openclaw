@@ -14,6 +14,7 @@ import {
   decodeHtmlEntitiesInObject,
   wrapOllamaCompatNumCtx,
   wrapStreamFnRepairMalformedToolCallArguments,
+  wrapStreamFnPromoteHistoricalToolCallThinking,
   wrapStreamFnTrimToolCallNames,
 } from "./attempt.js";
 
@@ -877,6 +878,129 @@ describe("wrapStreamFnRepairMalformedToolCallArguments", () => {
 
     expect(partialToolCall.arguments).toEqual({});
     expect(streamedToolCall.arguments).toEqual({});
+  });
+});
+
+describe("wrapStreamFnPromoteHistoricalToolCallThinking", () => {
+  function createFakeStream(params: { events: unknown[]; resultMessage: unknown }): {
+    result: () => Promise<unknown>;
+    [Symbol.asyncIterator]: () => AsyncIterator<unknown>;
+  } {
+    return {
+      async result() {
+        return params.resultMessage;
+      },
+      [Symbol.asyncIterator]() {
+        return (async function* () {
+          for (const event of params.events) {
+            yield event;
+          }
+        })();
+      },
+    };
+  }
+
+  async function invokeWrappedStream(baseFn: (...args: never[]) => unknown) {
+    const wrappedFn = wrapStreamFnPromoteHistoricalToolCallThinking(baseFn as never);
+    return await wrappedFn({} as never, {} as never, {} as never);
+  }
+
+  it("promotes historical tool call thinking before the runtime sees the final message", async () => {
+    const finalMessage = {
+      role: "assistant",
+      stopReason: "stop",
+      content: [
+        {
+          type: "thinking",
+          thinking: `[Historical tool call: exec]
+{"command":"ls -la"}`,
+        },
+      ],
+    };
+    const baseFn = vi.fn(() =>
+      createFakeStream({
+        events: [],
+        resultMessage: finalMessage,
+      }),
+    );
+
+    const stream = await invokeWrappedStream(baseFn);
+    const result = await stream.result();
+
+    expect(result).toBe(finalMessage);
+    expect(finalMessage.stopReason).toBe("toolUse");
+    expect(finalMessage.content).toEqual([
+      {
+        type: "toolCall",
+        id: expect.stringMatching(/^historical-tool-call-\d+$/),
+        name: "exec",
+        arguments: { command: "ls -la" },
+      },
+    ]);
+  });
+
+  it("promotes historical tool call thinking in streamed partial/message events", async () => {
+    const partialMessage = {
+      role: "assistant",
+      stopReason: "stop",
+      content: [
+        {
+          type: "thinking",
+          thinking: `[Historical tool call: process]
+{"action":"poll","sessionId":"abc"}`,
+        },
+      ],
+    };
+    const eventMessage = {
+      role: "assistant",
+      stopReason: "stop",
+      content: [
+        {
+          type: "thinking",
+          thinking: `[Historical tool call: read]
+{"file_path":"foo.txt"}`,
+        },
+      ],
+    };
+    const finalMessage = { role: "assistant", stopReason: "stop", content: [] };
+    const baseFn = vi.fn(() =>
+      createFakeStream({
+        events: [
+          {
+            type: "toolcall_delta",
+            partial: partialMessage,
+            message: eventMessage,
+          },
+        ],
+        resultMessage: finalMessage,
+      }),
+    );
+
+    const stream = await invokeWrappedStream(baseFn);
+    const seenEvents: unknown[] = [];
+    for await (const item of stream) {
+      seenEvents.push(item);
+    }
+
+    expect(seenEvents).toHaveLength(1);
+    expect(partialMessage.stopReason).toBe("toolUse");
+    expect(eventMessage.stopReason).toBe("toolUse");
+    expect(partialMessage.content).toEqual([
+      {
+        type: "toolCall",
+        id: expect.stringMatching(/^historical-tool-call-\d+$/),
+        name: "process",
+        arguments: { action: "poll", sessionId: "abc" },
+      },
+    ]);
+    expect(eventMessage.content).toEqual([
+      {
+        type: "toolCall",
+        id: expect.stringMatching(/^historical-tool-call-\d+$/),
+        name: "read",
+        arguments: { file_path: "foo.txt" },
+      },
+    ]);
   });
 });
 

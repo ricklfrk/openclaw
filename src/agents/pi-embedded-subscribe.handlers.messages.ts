@@ -4,6 +4,10 @@ import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { createInlineCodeState } from "../markdown/code-spans.js";
 import {
+  promoteCallTagsToBlocks,
+  promoteHistoricalContextToBlocks,
+} from "./custom-context-to-blocks.js";
+import {
   isMessagingToolDuplicateNormalized,
   normalizeTextForComparison,
 } from "./pi-embedded-helpers.js";
@@ -267,9 +271,16 @@ export function handleMessageEnd(
   if (ctx.state.deterministicApprovalPromptSent) {
     return;
   }
+  promoteCallTagsToBlocks(assistantMessage);
+  promoteHistoricalContextToBlocks(assistantMessage);
   promoteThinkingTagsToBlocks(assistantMessage);
 
   const rawText = extractAssistantText(assistantMessage);
+  // Preserve <final> tags for stripBlockTags — extractAssistantText strips them,
+  // which breaks enforceFinalTag mode (it needs the tags to extract the reply).
+  const rawTextWithTags = extractAssistantText(assistantMessage, {
+    preserveReasoningTags: true,
+  });
   appendRawStream({
     ts: Date.now(),
     event: "assistant_message_end",
@@ -279,10 +290,21 @@ export function handleMessageEnd(
     rawThinking: extractAssistantThinking(assistantMessage),
   });
 
+  const strippedText = ctx.stripBlockTags(rawTextWithTags, { thinking: false, final: false });
   const text = resolveSilentReplyFallbackText({
-    text: ctx.stripBlockTags(rawText, { thinking: false, final: false }),
+    text: strippedText,
     messagingToolSentTexts: ctx.state.messagingToolSentTexts,
   });
+
+  // Diagnostic: trace text extraction pipeline for enforceFinalTag debugging
+  if (ctx.params.enforceFinalTag) {
+    ctx.log.warn(
+      `[msg-end-diag] rawTextWithTags(${rawTextWithTags.length}ch)="${rawTextWithTags.slice(0, 80)}" ` +
+        `stripped(${strippedText.length}ch)="${strippedText.slice(0, 80)}" ` +
+        `text(${text.length}ch)="${text.slice(0, 80)}" ` +
+        `stopReason=${(assistantMessage as { stopReason?: string }).stopReason}`,
+    );
+  }
   const rawThinking =
     ctx.state.includeReasoning || ctx.state.streamReasoning
       ? extractAssistantThinking(assistantMessage) || extractThinkingFromTaggedText(rawText)
@@ -294,6 +316,10 @@ export function handleMessageEnd(
   let mediaUrls = parsedText?.mediaUrls;
   let hasMedia = Boolean(mediaUrls && mediaUrls.length > 0);
 
+  // When the model omits <final> tags in a short reply (non-enforcement mode),
+  // fall back to the raw text. In enforceFinalTag mode we must NOT fall back —
+  // if the model didn't produce <final> tags the entire output is thinking
+  // content that must be suppressed.
   if (!cleanedText && !hasMedia && !ctx.params.enforceFinalTag) {
     const rawTrimmed = rawText.trim();
     const rawStrippedFinal = rawTrimmed.replace(/<\s*\/?\s*final\s*>/gi, "").trim();
@@ -327,9 +353,30 @@ export function handleMessageEnd(
     ctx.state.emittedAssistantUpdate = true;
   }
 
+  // When onBlockReply is absent, the chunker won't be drained in the block
+  // reply section below. Drain it here so assistantTexts is always populated
+  // with the extracted text — without this, enforceFinalTag runs can lose
+  // the reply entirely when block streaming is active but onBlockReply is not set.
+  if (!ctx.params.onBlockReply && ctx.blockChunker?.hasBuffered()) {
+    ctx.blockChunker.drain({ force: true, emit: ctx.emitBlockChunk });
+    ctx.blockChunker.reset();
+  }
+
   const addedDuringMessage = ctx.state.assistantTexts.length > ctx.state.assistantTextBaseline;
   const chunkerHasBuffered = ctx.blockChunker?.hasBuffered() ?? false;
-  ctx.finalizeAssistantTexts({ text, addedDuringMessage, chunkerHasBuffered });
+  // Use cleanedText (which includes fallback) instead of raw stripBlockTags result
+  // so assistantTexts is populated even when enforceFinalTag mode returns empty.
+  const finalText = cleanedText || text;
+  ctx.finalizeAssistantTexts({ text: finalText, addedDuringMessage, chunkerHasBuffered });
+
+  // Diagnostic: trace finalizeAssistantTexts outcome
+  if (ctx.params.enforceFinalTag) {
+    ctx.log.warn(
+      `[msg-end-diag] cleanedText(${cleanedText.length}ch) finalText(${finalText.length}ch) ` +
+        `addedDuringMsg=${addedDuringMessage} chunkerBuf=${chunkerHasBuffered} ` +
+        `assistantTexts=${ctx.state.assistantTexts.length} baseline=${ctx.state.assistantTextBaseline}`,
+    );
+  }
 
   const onBlockReply = ctx.params.onBlockReply;
   const emitBlockReplySafely = (payload: Parameters<NonNullable<typeof onBlockReply>>[0]) => {
@@ -392,15 +439,14 @@ export function handleMessageEnd(
   if (
     (ctx.state.blockReplyBreak === "message_end" ||
       (ctx.blockChunker ? ctx.blockChunker.hasBuffered() : ctx.state.blockBuffer.length > 0)) &&
-    text &&
+    finalText &&
     onBlockReply
   ) {
     if (ctx.blockChunker?.hasBuffered()) {
       ctx.blockChunker.drain({ force: true, emit: ctx.emitBlockChunk });
       ctx.blockChunker.reset();
-    } else if (text !== ctx.state.lastBlockReplyText) {
-      // Check for duplicates before emitting (same logic as emitBlockChunk).
-      const normalizedText = normalizeTextForComparison(text);
+    } else if (finalText !== ctx.state.lastBlockReplyText) {
+      const normalizedText = normalizeTextForComparison(finalText);
       if (
         isMessagingToolDuplicateNormalized(
           normalizedText,
@@ -408,11 +454,11 @@ export function handleMessageEnd(
         )
       ) {
         ctx.log.debug(
-          `Skipping message_end block reply - already sent via messaging tool: ${text.slice(0, 50)}...`,
+          `Skipping message_end block reply - already sent via messaging tool: ${finalText.slice(0, 50)}...`,
         );
       } else {
-        ctx.state.lastBlockReplyText = text;
-        emitSplitResultAsBlockReply(ctx.consumeReplyDirectives(text, { final: true }));
+        ctx.state.lastBlockReplyText = finalText;
+        emitSplitResultAsBlockReply(ctx.consumeReplyDirectives(finalText, { final: true }));
       }
     }
   }

@@ -8,6 +8,7 @@ import {
   SessionManager,
 } from "@mariozechner/pi-coding-agent";
 import { resolveHeartbeatPrompt } from "../../../auto-reply/heartbeat.js";
+import { promoteHistoricalToolCallThinkingToBlocks } from "../../custom-context-to-blocks.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
 import type { OpenClawConfig } from "../../../config/config.js";
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
@@ -1056,6 +1057,73 @@ function shouldRepairMalformedAnthropicToolCallArguments(provider?: string): boo
   return normalizeProviderId(provider ?? "") === "kimi-coding";
 }
 
+function promoteHistoricalToolCallThinkingInMessage(message: unknown): void {
+  if (!message || typeof message !== "object") {
+    return;
+  }
+  const assistantMessage = message as AssistantMessage;
+  if (assistantMessage.role !== "assistant" || !Array.isArray(assistantMessage.content)) {
+    return;
+  }
+  promoteHistoricalToolCallThinkingToBlocks(assistantMessage);
+  if (
+    (assistantMessage as { stopReason?: unknown }).stopReason === "tool_call" &&
+    assistantMessage.content.some((block) => block?.type === "toolCall")
+  ) {
+    // pi-agent-core's tool loop keys off assistant tool-use turns, so normalize
+    // the salvage output before the stream reaches the runtime.
+    (assistantMessage as { stopReason?: string }).stopReason = "toolUse";
+  }
+}
+
+function wrapStreamPromoteHistoricalToolCallThinking(
+  stream: ReturnType<typeof streamSimple>,
+): ReturnType<typeof streamSimple> {
+  const originalResult = stream.result.bind(stream);
+  stream.result = async () => {
+    const message = await originalResult();
+    promoteHistoricalToolCallThinkingInMessage(message);
+    return message;
+  };
+
+  const originalAsyncIterator = stream[Symbol.asyncIterator].bind(stream);
+  (stream as { [Symbol.asyncIterator]: typeof originalAsyncIterator })[Symbol.asyncIterator] =
+    function () {
+      const iterator = originalAsyncIterator();
+      return {
+        async next() {
+          const result = await iterator.next();
+          if (!result.done && result.value && typeof result.value === "object") {
+            const event = result.value as { partial?: unknown; message?: unknown };
+            promoteHistoricalToolCallThinkingInMessage(event.partial);
+            promoteHistoricalToolCallThinkingInMessage(event.message);
+          }
+          return result;
+        },
+        async return(value?: unknown) {
+          return iterator.return?.(value) ?? { done: true as const, value: undefined };
+        },
+        async throw(error?: unknown) {
+          return iterator.throw?.(error) ?? { done: true as const, value: undefined };
+        },
+      };
+    };
+
+  return stream;
+}
+
+export function wrapStreamFnPromoteHistoricalToolCallThinking(baseFn: StreamFn): StreamFn {
+  return (model, context, options) => {
+    const maybeStream = baseFn(model, context, options);
+    if (maybeStream && typeof maybeStream === "object" && "then" in maybeStream) {
+      return Promise.resolve(maybeStream).then((stream) =>
+        wrapStreamPromoteHistoricalToolCallThinking(stream),
+      );
+    }
+    return wrapStreamPromoteHistoricalToolCallThinking(maybeStream);
+  };
+}
+
 // ---------------------------------------------------------------------------
 // xAI / Grok: decode HTML entities in tool call arguments
 // ---------------------------------------------------------------------------
@@ -1947,10 +2015,10 @@ export async function runEmbeddedAttempt(
         activeSession.agent.streamFn = cacheTrace.wrapStreamFn(activeSession.agent.streamFn);
       }
 
-      // Anthropic Claude endpoints can reject replayed `thinking` blocks
-      // (e.g. thinkingSignature:"reasoning_text") on any follow-up provider
-      // call, including tool continuations. Wrap the stream function so every
-      // outbound request sees sanitized messages.
+      // Strip `thinking` blocks from outbound history.
+      // - "all": Copilot/Claude rejects non-binary thinkingSignatures; drop everything.
+      // - "historical": Google/Gemini; drop from previous turns only, keeping the
+      //   current tool loop's thinking so the model retains its multi-step plan.
       if (transcriptPolicy.dropThinkingBlocks) {
         const inner = activeSession.agent.streamFn;
         activeSession.agent.streamFn = (model, context, options) => {
@@ -2053,6 +2121,10 @@ export async function runEmbeddedAttempt(
           activeSession.agent.streamFn,
         );
       }
+
+      activeSession.agent.streamFn = wrapStreamFnPromoteHistoricalToolCallThinking(
+        activeSession.agent.streamFn,
+      );
 
       if (anthropicPayloadLogger) {
         activeSession.agent.streamFn = anthropicPayloadLogger.wrapStreamFn(
