@@ -295,6 +295,7 @@ function normalizePayloadsForChannelDelivery(
   _cfg: OpenClawConfig,
   _to: string,
   _accountId?: string,
+  opts?: { skipPlainTextSanitize?: boolean },
 ): ReplyPayload[] {
   const normalizedPayloads: ReplyPayload[] = [];
   for (const payload of normalizeReplyPayloadsForDelivery(payloads)) {
@@ -302,7 +303,7 @@ function normalizePayloadsForChannelDelivery(
     // Strip HTML tags for plain-text surfaces (WhatsApp, Signal, etc.)
     // Models occasionally produce <br>, <b>, etc. that render as literal text.
     // See https://github.com/openclaw/openclaw/issues/31884
-    if (isPlainTextSurface(channel) && sanitizedPayload.text) {
+    if (!opts?.skipPlainTextSanitize && isPlainTextSurface(channel) && sanitizedPayload.text) {
       // Telegram sendPayload uses textMode:"html". Preserve raw HTML in this path.
       if (!(channel === "telegram" && sanitizedPayload.channelData)) {
         sanitizedPayload = {
@@ -660,13 +661,13 @@ async function deliverOutboundPayloadsCore(
       })),
     };
   };
-  const normalizedPayloads = normalizePayloadsForChannelDelivery(
-    payloads,
-    channel,
-    cfg,
-    to,
-    accountId,
-  );
+  // Two-phase normalization: first apply media/reply parsing WITHOUT
+  // plain-text sanitization so plugin hooks see the raw text (e.g. the
+  // regex-replace plugin can match <disclaimer> tags). Plain-text
+  // sanitization (stripping HTML-like tags) runs after hooks.
+  const preHookPayloads = normalizePayloadsForChannelDelivery(payloads, channel, cfg, to, accountId, {
+    skipPlainTextSanitize: true,
+  });
   const hookRunner = getGlobalHookRunner();
   const sessionKeyForInternalHooks = params.mirror?.sessionKey ?? params.session?.key;
   const mirrorIsGroup = params.mirror?.isGroup;
@@ -691,12 +692,14 @@ async function deliverOutboundPayloadsCore(
       },
     );
   }
-  for (const payload of normalizedPayloads) {
+  const needsPlainTextSanitize = isPlainTextSurface(channel);
+  for (const payload of preHookPayloads) {
     let payloadSummary = buildPayloadSummary(payload);
     try {
       throwIfAborted(abortSignal);
 
-      // Run message_sending plugin hook (may modify content or cancel)
+      // Run message_sending plugin hook BEFORE plain-text sanitization so
+      // plugins see the original tags (e.g. <disclaimer>...</disclaimer>).
       const hookResult = await applyMessageSendingHook({
         hookRunner,
         enabled: hasMessageSendingHooks,
@@ -709,8 +712,29 @@ async function deliverOutboundPayloadsCore(
       if (hookResult.cancelled) {
         continue;
       }
-      const effectivePayload = hookResult.payload;
+      let effectivePayload = hookResult.payload;
       payloadSummary = hookResult.payloadSummary;
+
+      // Phase 2: apply plain-text sanitization after hooks.
+      // Telegram sendPayload with channelData uses textMode:"html", so skip it.
+      if (
+        needsPlainTextSanitize &&
+        payloadSummary.text &&
+        !(channel === "telegram" && effectivePayload.channelData)
+      ) {
+        const sanitized = sanitizeForPlainText(payloadSummary.text);
+        payloadSummary = { ...payloadSummary, text: sanitized };
+        if (effectivePayload.text) {
+          effectivePayload = {
+            ...effectivePayload,
+            text: sanitizeForPlainText(effectivePayload.text),
+          };
+        }
+        // Drop payloads that become empty after sanitization (e.g. "<br><br>")
+        if (!payloadSummary.text.trim() && payloadSummary.mediaUrls.length === 0) {
+          continue;
+        }
+      }
 
       params.onPayload?.(payloadSummary);
       const sendOverrides = {

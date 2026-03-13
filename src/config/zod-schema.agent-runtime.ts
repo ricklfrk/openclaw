@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { getBlockedNetworkModeReason } from "../agents/sandbox/network-mode.js";
 import { parseDurationMs } from "../cli/parse-duration.js";
-import { AgentModelSchema } from "./zod-schema.agent-model.js";
 import {
   GroupChatSchema,
   HumanDelaySchema,
@@ -696,7 +695,16 @@ export const MemorySearchSchema = z
   })
   .strict()
   .optional();
-export { AgentModelSchema };
+export const AgentModelSchema = z.union([
+  z.string(),
+  z
+    .object({
+      primary: z.string().optional(),
+      compact: z.string().optional(),
+      fallbacks: z.array(z.string()).optional(),
+    })
+    .strict(),
+]);
 
 const AgentRuntimeAcpSchema = z
   .object({
@@ -723,7 +731,6 @@ const AgentRuntimeSchema = z
       .strict(),
   ])
   .optional();
-
 export const AgentEntrySchema = z
   .object({
     id: z.string(),
@@ -747,12 +754,22 @@ export const AgentEntrySchema = z
             z
               .object({
                 primary: z.string().optional(),
+                compact: z.string().optional(),
                 fallbacks: z.array(z.string()).optional(),
               })
               .strict(),
           ])
           .optional(),
         thinking: z.string().optional(),
+      })
+      .strict()
+      .optional(),
+    retry: z
+      .object({
+        enabled: z.boolean().optional(),
+        maxRetries: z.number().int().nonnegative().optional(),
+        baseDelayMs: z.number().int().positive().optional(),
+        maxDelayMs: z.number().int().nonnegative().optional(),
       })
       .strict()
       .optional(),

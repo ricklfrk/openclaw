@@ -20,6 +20,7 @@ import {
 import { requireActivePluginRegistry } from "../plugins/runtime.js";
 import { normalizeAccountId } from "../routing/session-key.js";
 import { resolveSignalAccount } from "../signal/accounts.js";
+import { looksLikeUuid } from "../signal/identity.js";
 import { inspectSlackAccount } from "../slack/account-inspect.js";
 import { resolveSlackReplyToMode } from "../slack/accounts.js";
 import { buildSlackThreadingToolContext } from "../slack/threading-tool-context.js";
@@ -508,8 +509,19 @@ const DOCKS: Record<ChatChannelId, ChannelDock> = {
       formatAllowFrom: ({ allowFrom }) =>
         formatNormalizedAllowFromEntries({
           allowFrom,
-          normalizeEntry: (entry) =>
-            entry === "*" ? "*" : normalizeE164(entry.replace(/^signal:/i, "")),
+          normalizeEntry: (entry) => {
+            if (entry === "*") {
+              return "*";
+            }
+            const stripped = entry.replace(/^signal:/i, "");
+            if (stripped.toLowerCase().startsWith("uuid:")) {
+              return `uuid:${stripped.slice("uuid:".length).trim()}`;
+            }
+            if (looksLikeUuid(stripped)) {
+              return `uuid:${stripped}`;
+            }
+            return normalizeE164(stripped);
+          },
         }),
       resolveDefaultTo: ({ cfg, accountId }) =>
         resolveOptionalConfigString(resolveSignalAccount({ cfg, accountId }).config.defaultTo),

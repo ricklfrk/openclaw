@@ -1,7 +1,10 @@
 import { SettingsManager } from "@mariozechner/pi-coding-agent";
 import type { OpenClawConfig } from "../config/config.js";
 import { applyMergePatch } from "../config/merge-patch.js";
-import { applyPiCompactionSettingsFromConfig } from "./pi-settings.js";
+import {
+  applyPiCompactionSettingsFromConfig,
+  applyPiRetrySettingsFromConfig,
+} from "./pi-settings.js";
 
 export const DEFAULT_EMBEDDED_PI_PROJECT_SETTINGS_POLICY = "sanitize";
 export const SANITIZED_PROJECT_PI_KEYS = ["shellPath", "shellCommandPrefix"] as const;
@@ -65,11 +68,17 @@ export function createPreparedEmbeddedPiSettingsManager(params: {
   cwd: string;
   agentDir: string;
   cfg?: OpenClawConfig;
+  agentId?: string;
 }): SettingsManager {
   const settingsManager = createEmbeddedPiSettingsManager(params);
   applyPiCompactionSettingsFromConfig({
     settingsManager,
     cfg: params.cfg,
+  });
+  applyPiRetrySettingsFromConfig({
+    settingsManager,
+    cfg: params.cfg,
+    agentId: params.agentId,
   });
   return settingsManager;
 }

@@ -42,6 +42,7 @@ import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import {
   buildEmbeddedRunBaseParams,
   buildEmbeddedRunContexts,
+  resolveFallbackRetryPrompt,
   resolveModelFallbackOptions,
 } from "./agent-runner-utils.js";
 import { type BlockReplyPipeline } from "./block-reply-pipeline.js";
@@ -199,10 +200,13 @@ export async function runAgentTurnWithFallback(params: {
       };
       const blockReplyPipeline = params.blockReplyPipeline;
       const onToolResult = params.opts?.onToolResult;
+      let fallbackAttemptIndex = 0;
       const fallbackResult = await runWithModelFallback({
         ...resolveModelFallbackOptions(params.followupRun.run),
         runId,
         run: (provider, model, runOptions) => {
+          const isFallbackRetry = fallbackAttemptIndex > 0;
+          fallbackAttemptIndex += 1;
           // Notify that model selection is complete (including after fallback).
           // This allows responsePrefix template interpolation with the actual model.
           params.opts?.onModelSelected?.({
@@ -322,6 +326,10 @@ export async function runAgentTurnWithFallback(params: {
             authProfile,
             allowTransientCooldownProbe: runOptions?.allowTransientCooldownProbe,
           });
+          const prompt = resolveFallbackRetryPrompt({
+            body: params.commandBody,
+            isFallbackRetry,
+          });
           return (async () => {
             const result = await runEmbeddedPiAgent({
               ...embeddedContext,
@@ -332,8 +340,14 @@ export async function runAgentTurnWithFallback(params: {
               groupSpace: params.sessionCtx.GroupSpace?.trim() ?? undefined,
               ...senderContext,
               ...runBaseParams,
-              prompt: params.commandBody,
+              prompt,
               extraSystemPrompt: params.followupRun.run.extraSystemPrompt,
+              inputProvenance: isFallbackRetry
+                ? {
+                    kind: "internal_system",
+                    sourceTool: "model_fallback",
+                  }
+                : undefined,
               toolResultFormat: (() => {
                 const channel = resolveMessageChannel(
                   params.sessionCtx.Surface,

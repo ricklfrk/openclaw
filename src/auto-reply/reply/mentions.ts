@@ -11,7 +11,9 @@ function deriveMentionPatterns(identity?: { name?: string; emoji?: string }) {
   if (name) {
     const parts = name.split(/\s+/).filter(Boolean).map(escapeRegExp);
     const re = parts.length ? parts.join(String.raw`\s+`) : escapeRegExp(name);
-    patterns.push(String.raw`\b@?${re}\b`);
+    // Only match @name or /name (with word boundary or EOL), not bare name
+    patterns.push(String.raw`@${re}\b`);
+    patterns.push(String.raw`/${re}\b`);
   }
   const emoji = identity?.emoji?.trim();
   if (emoji) {
@@ -43,14 +45,21 @@ function resolveMentionPatterns(cfg: OpenClawConfig | undefined, agentId?: strin
   }
   const agentConfig = agentId ? resolveAgentConfig(cfg, agentId) : undefined;
   const agentGroupChat = agentConfig?.groupChat;
-  if (agentGroupChat && Object.hasOwn(agentGroupChat, "mentionPatterns")) {
-    return agentGroupChat.mentionPatterns ?? [];
-  }
   const globalGroupChat = cfg.messages?.groupChat;
-  if (globalGroupChat && Object.hasOwn(globalGroupChat, "mentionPatterns")) {
-    return globalGroupChat.mentionPatterns ?? [];
+  let primary: string[] = [];
+  if (agentGroupChat && Object.hasOwn(agentGroupChat, "mentionPatterns")) {
+    primary = agentGroupChat.mentionPatterns ?? [];
+  } else if (globalGroupChat && Object.hasOwn(globalGroupChat, "mentionPatterns")) {
+    primary = globalGroupChat.mentionPatterns ?? [];
   }
   const derived = deriveMentionPatterns(agentConfig?.identity);
+  // When user sets mentionPatterns, still add identity.name patterns so "@Mea" "/Mea" work
+  if (primary.length > 0 && derived.length > 0) {
+    return [...primary, ...derived];
+  }
+  if (primary.length > 0) {
+    return primary;
+  }
   return derived.length > 0 ? derived : [];
 }
 

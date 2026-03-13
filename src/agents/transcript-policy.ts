@@ -25,6 +25,8 @@ export type TranscriptPolicy = {
   };
   sanitizeThinkingSignatures: boolean;
   dropThinkingBlocks: boolean;
+  /** "all" = drop from every message; "historical" = keep current tool loop (after last user msg) */
+  dropThinkingBlocksMode: "all" | "historical" | "off";
   applyGoogleTurnOrdering: boolean;
   validateGeminiTurns: boolean;
   validateAnthropicTurns: boolean;
@@ -80,10 +82,17 @@ export function resolveTranscriptPolicy(params: {
     });
   const requiresOpenAiCompatibleToolIdSanitization = params.modelApi === "openai-completions";
 
-  // Anthropic Claude endpoints can reject replayed `thinking` blocks unless the
-  // original signatures are preserved byte-for-byte. Drop them at send-time to
-  // keep persisted sessions usable across follow-up turns.
-  const dropThinkingBlocks = shouldDropThinkingBlocksForModel({ provider, modelId });
+  // Drop `thinking` blocks from outbound history.
+  // - "all": Anthropic/Claude rejects non-binary thinkingSignatures; drop everything.
+  // - "historical": Google/Gemini; drop from previous turns only, keeping the
+  //   current tool loop's thinking so the model retains its multi-step plan.
+  const dropThinkingBlocksMode: "all" | "historical" | "off" =
+    shouldDropThinkingBlocksForModel({ provider, modelId })
+      ? "all"
+      : isGoogle || shouldSanitizeGeminiThoughtSignaturesForProvider
+        ? "historical"
+        : "off";
+  const dropThinkingBlocks = dropThinkingBlocksMode !== "off";
 
   const needsNonImageSanitize =
     isGoogle || isAnthropic || isMistral || shouldSanitizeGeminiThoughtSignaturesForProvider;
@@ -116,6 +125,7 @@ export function resolveTranscriptPolicy(params: {
     sanitizeThoughtSignatures: isOpenAi ? undefined : sanitizeThoughtSignatures,
     sanitizeThinkingSignatures: false,
     dropThinkingBlocks,
+    dropThinkingBlocksMode,
     applyGoogleTurnOrdering: !isOpenAi && (isGoogle || isStrictOpenAiCompatible),
     validateGeminiTurns: !isOpenAi && (isGoogle || isStrictOpenAiCompatible),
     validateAnthropicTurns: !isOpenAi && (isAnthropic || isStrictOpenAiCompatible),

@@ -23,6 +23,8 @@ const BindingMatchSchema = z
           z.literal("channel"),
           /** @deprecated Use `direct` instead. Kept for backward compatibility. */
           z.literal("dm"),
+          /** Webhook inbound (e.g. external services like Paperclip). */
+          z.literal("webhook"),
         ]),
         id: z.string(),
       })

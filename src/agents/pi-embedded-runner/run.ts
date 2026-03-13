@@ -20,6 +20,7 @@ import {
   markAuthProfileGood,
   markAuthProfileUsed,
   resolveProfilesUnavailableReason,
+  stampProfileLastUsed,
 } from "../auth-profiles.js";
 import {
   CONTEXT_WINDOW_HARD_MIN_TOKENS,
@@ -63,8 +64,13 @@ import { log } from "./logger.js";
 import { resolveModel } from "./model.js";
 import { runEmbeddedAttempt } from "./run/attempt.js";
 import { createFailoverDecisionLogger } from "./run/failover-observation.js";
+import {
+  NON_CONFORMING_FORMAT_HINT,
+  checkNonConformingOutput,
+} from "./run/non-conforming-retry.js";
 import type { RunEmbeddedPiAgentParams } from "./run/params.js";
 import { buildEmbeddedRunPayloads } from "./run/payloads.js";
+import { createKeyRotationState } from "./stream-key-rotation.js";
 import {
   truncateOversizedToolResultsInSession,
   sessionLikelyHasOversizedToolResults,
@@ -644,6 +650,9 @@ export async function runEmbeddedPiAgent(
           }
           try {
             await applyApiKeyInfo(candidate);
+            if (lastProfileId) {
+              await stampProfileLastUsed({ store: authStore, profileId: lastProfileId, agentDir });
+            }
             profileIndex = nextIndex;
             thinkLevel = initialThinkLevel;
             attemptedThinking.clear();
@@ -697,6 +706,9 @@ export async function runEmbeddedPiAgent(
             }
           }
           await applyApiKeyInfo(profileCandidates[profileIndex]);
+          if (lastProfileId) {
+            await stampProfileLastUsed({ store: authStore, profileId: lastProfileId, agentDir });
+          }
           break;
         }
         if (profileIndex >= profileCandidates.length) {
@@ -744,6 +756,8 @@ export async function runEmbeddedPiAgent(
       let bootstrapPromptWarningSignaturesSeen =
         params.bootstrapPromptWarningSignaturesSeen ??
         (params.bootstrapPromptWarningSignature ? [params.bootstrapPromptWarningSignature] : []);
+      let formatHintInjected = false;
+      let pendingNonConformingFallbackText: string | undefined;
       const usageAccumulator = createUsageAccumulator();
       let lastRunPromptUsage: ReturnType<typeof normalizeUsage> | undefined;
       let autoCompactionCount = 0;
@@ -802,6 +816,18 @@ export async function runEmbeddedPiAgent(
       // repeated initialization/connection overhead per attempt.
       ensureContextEnginesInitialized();
       const contextEngine = await resolveContextEngine(params.config);
+
+      // Per-turn API key rotation state: shared between the streamFn wrapper
+      // (inside prompt()) and this while-loop so the wrapper can signal when
+      // all keys are exhausted and the loop can throw FailoverError immediately.
+      const keyRotationState = createKeyRotationState();
+      keyRotationState.rotationIndex = profileIndex;
+      const keyRotationResolveApiKey = async (
+        candidate: string | undefined,
+      ): Promise<string | undefined> => {
+        const info = await resolveApiKeyForCandidate(candidate);
+        return info.apiKey;
+      };
       try {
         let authRetryPending = false;
         // Hoisted so the retry-limit error path can use the most recent API total.
@@ -890,7 +916,7 @@ export async function runEmbeddedPiAgent(
             authStorage,
             modelRegistry,
             agentId: workspaceResolution.agentId,
-            legacyBeforeAgentStartResult,
+            legacyBeforeAgentStartResult: undefined,
             thinkLevel,
             fastMode: params.fastMode,
             verboseLevel: params.verboseLevel,
@@ -913,7 +939,9 @@ export async function runEmbeddedPiAgent(
             onReasoningEnd: params.onReasoningEnd,
             onToolResult: params.onToolResult,
             onAgentEvent: params.onAgentEvent,
-            extraSystemPrompt: params.extraSystemPrompt,
+            extraSystemPrompt: formatHintInjected
+              ? [params.extraSystemPrompt, NON_CONFORMING_FORMAT_HINT].filter(Boolean).join("\n\n")
+              : params.extraSystemPrompt,
             inputProvenance: params.inputProvenance,
             streamParams: params.streamParams,
             ownerNumbers: params.ownerNumbers,
@@ -921,7 +949,17 @@ export async function runEmbeddedPiAgent(
             bootstrapPromptWarningSignaturesSeen,
             bootstrapPromptWarningSignature:
               bootstrapPromptWarningSignaturesSeen[bootstrapPromptWarningSignaturesSeen.length - 1],
+            keyRotationState,
+            keyRotationCandidates: profileCandidates,
+            keyRotationAuthStore: authStore,
+            keyRotationResolveApiKey,
           });
+
+          // Sync rotation state back: if the wrapper used a different profile,
+          // attribute errors to the correct profile.
+          if (keyRotationState.lastProfileId) {
+            lastProfileId = keyRotationState.lastProfileId;
+          }
 
           const {
             aborted,
@@ -1409,6 +1447,96 @@ export async function runEmbeddedPiAgent(
             );
           }
 
+          // ORDERING: allKeysExhausted and shouldRotate checks MUST run before
+          // checkNonConformingOutput below.  Empty responses from exhausted keys
+          // would otherwise trigger non-conforming "fail" → continue → infinite loop
+          // because no new key is available.
+          //
+          // If the streamFn key-rotation wrapper already exhausted all profile keys
+          // on a rate-limit error, skip the normal rotate/retry path and immediately
+          // trigger model fallback (or fail) to avoid redundant retries.
+          if (keyRotationState.allKeysExhausted) {
+            if (pendingNonConformingFallbackText) {
+              log.info(
+                `[non-conforming-fallback] all profiles exhausted; delivering deferred raw text for ${provider}/${modelId}`,
+              );
+              const usage = toNormalizedUsage(usageAccumulator);
+              if (usage && lastTurnTotal && lastTurnTotal > 0) {
+                usage.total = lastTurnTotal;
+              }
+              const lastCallUsage = normalizeUsage(lastAssistant?.usage as UsageLike);
+              const promptTokens = derivePromptTokens(lastRunPromptUsage);
+              const agentMeta: EmbeddedPiAgentMeta = {
+                sessionId: sessionIdUsed,
+                provider: lastAssistant?.provider ?? provider,
+                model: lastAssistant?.model ?? model.id,
+                usage,
+                lastCallUsage: lastCallUsage ?? undefined,
+                promptTokens,
+                compactionCount: autoCompactionCount > 0 ? autoCompactionCount : undefined,
+              };
+              const payloads = buildEmbeddedRunPayloads({
+                assistantTexts: [pendingNonConformingFallbackText],
+                toolMetas: attempt.toolMetas,
+                lastAssistant: attempt.lastAssistant,
+                lastToolError: attempt.lastToolError,
+                config: params.config,
+                sessionKey: params.sessionKey ?? params.sessionId,
+                provider: activeErrorContext.provider,
+                model: activeErrorContext.model,
+                verboseLevel: params.verboseLevel,
+                reasoningLevel: params.reasoningLevel,
+                toolResultFormat: resolvedToolResultFormat,
+                suppressToolErrorWarnings: params.suppressToolErrorWarnings,
+                inlineToolResultsAllowed: false,
+                didSendViaMessagingTool: attempt.didSendViaMessagingTool,
+              });
+              return {
+                payloads,
+                meta: {
+                  durationMs: Date.now() - started,
+                  agentMeta,
+                },
+              };
+            }
+            if (fallbackConfigured) {
+              throw new FailoverError(
+                "All API key profiles exhausted due to rate limiting (429). Falling back to next model.",
+                {
+                  reason: "rate_limit",
+                  provider,
+                  model: modelId,
+                  profileId: lastProfileId,
+                  status: 429,
+                },
+              );
+            }
+            return {
+              payloads: [
+                {
+                  text: "All API keys are currently rate-limited. Please try again later.",
+                  isError: true,
+                },
+              ],
+              meta: {
+                durationMs: Date.now() - started,
+                agentMeta: buildErrorAgentMeta({
+                  sessionId: sessionIdUsed,
+                  provider,
+                  model: model.id,
+                  usageAccumulator,
+                  lastRunPromptUsage,
+                  lastAssistant,
+                  lastTurnTotal,
+                }),
+                error: {
+                  kind: "retry_limit",
+                  message: "All profile keys exhausted due to rate limiting",
+                },
+              },
+            };
+          }
+
           // Rotate on timeout to try another account/model path in this turn,
           // but exclude post-prompt compaction timeouts (model succeeded; no profile issue).
           const shouldRotate =
@@ -1481,6 +1609,37 @@ export async function runEmbeddedPiAgent(
             logAssistantFailoverDecision("surface_error");
           }
 
+          const nonConforming = checkNonConformingOutput({
+            enforceFinalTag: params.enforceFinalTag ?? false,
+            formatHintInjected,
+            aborted,
+            timedOut,
+            assistantTexts: attempt.assistantTexts,
+            didSendViaMessagingTool: attempt.didSendViaMessagingTool,
+            lastAssistant,
+          });
+          if (nonConforming?.action === "fail") {
+            // Session was already rolled back inside attempt.ts (branchWithSummary)
+            // so the next attempt starts from a clean state.
+            if (nonConforming.fallbackText) {
+              pendingNonConformingFallbackText = nonConforming.fallbackText;
+            }
+            if (!formatHintInjected) {
+              formatHintInjected = true;
+              log.info(
+                `[non-conforming-fail] injecting format hint into system prompt for subsequent attempts`,
+              );
+            }
+            if (nonConforming.skipProfile && lastProfileId) {
+              keyRotationState.skipProfiles.add(lastProfileId);
+            }
+            log.warn(
+              `[non-conforming-fail] ${provider}/${modelId} (profile=${lastProfileId}); ` +
+                `skipProfile=${nonConforming.skipProfile} hintInjected=${formatHintInjected}`,
+            );
+            continue;
+          }
+
           const usage = toNormalizedUsage(usageAccumulator);
           if (usage && lastTurnTotal && lastTurnTotal > 0) {
             usage.total = lastTurnTotal;
@@ -1502,6 +1661,9 @@ export async function runEmbeddedPiAgent(
             compactionCount: autoCompactionCount > 0 ? autoCompactionCount : undefined,
           };
 
+          log.debug(
+            `[payload-trace] assistantTexts=${attempt.assistantTexts.length} texts="${attempt.assistantTexts.map((t) => t.slice(0, 40)).join("|")}" didSendViaTool=${attempt.didSendViaMessagingTool}`,
+          );
           const payloads = buildEmbeddedRunPayloads({
             assistantTexts: attempt.assistantTexts,
             toolMetas: attempt.toolMetas,
@@ -1519,6 +1681,9 @@ export async function runEmbeddedPiAgent(
             didSendViaMessagingTool: attempt.didSendViaMessagingTool,
             didSendDeterministicApprovalPrompt: attempt.didSendDeterministicApprovalPrompt,
           });
+          log.debug(
+            `[payload-trace] payloads=${payloads.length} texts="${payloads.map((p) => (p.text ?? "").slice(0, 40)).join("|")}"`,
+          );
 
           // Timeout aborts can leave the run without any assistant payloads.
           // Emit an explicit timeout error instead of silently completing, so

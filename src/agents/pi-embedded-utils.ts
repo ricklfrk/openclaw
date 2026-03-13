@@ -1,7 +1,7 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
-import { extractTextFromChatContent } from "../shared/chat-content.js";
 import { stripReasoningTagsFromText } from "../shared/text/reasoning-tags.js";
+import { stripCallTagsFromText, stripHistoricalContextText } from "./custom-context-to-blocks.js";
 import { sanitizeUserFacingText } from "./pi-embedded-helpers.js";
 import { formatToolDetail, resolveToolDisplay } from "./tool-display.js";
 
@@ -233,18 +233,40 @@ export function stripThinkingTagsFromText(text: string): string {
   return stripReasoningTagsFromText(text, { mode: "strict", trim: "both" });
 }
 
-export function extractAssistantText(msg: AssistantMessage): string {
-  const extracted =
-    extractTextFromChatContent(msg.content, {
-      sanitizeText: (text) =>
-        stripThinkingTagsFromText(
-          stripDowngradedToolCallText(stripModelSpecialTokens(stripMinimaxToolCallXml(text))),
-        ).trim(),
-      joinWith: "\n",
-      normalizeText: (text) => text.trim(),
-    }) ?? "";
+export function extractAssistantText(
+  msg: AssistantMessage,
+  options?: { preserveReasoningTags?: boolean },
+): string {
+  const isTextBlock = (block: unknown): block is { type: "text"; text: string } => {
+    if (!block || typeof block !== "object") {
+      return false;
+    }
+    const rec = block as Record<string, unknown>;
+    return rec.type === "text" && typeof rec.text === "string";
+  };
+
+  const blocks = Array.isArray(msg.content)
+    ? msg.content
+        .filter(isTextBlock)
+        .map((c) => {
+          const cleaned = stripCallTagsFromText(
+            stripHistoricalContextText(
+              stripDowngradedToolCallText(
+                stripModelSpecialTokens(stripMinimaxToolCallXml(c.text)),
+              ),
+            ),
+          );
+          return options?.preserveReasoningTags
+            ? cleaned.trim()
+            : stripThinkingTagsFromText(cleaned).trim();
+        })
+        .filter(Boolean)
+    : [];
+  const extracted = blocks.join("\n").trim();
+  if (options?.preserveReasoningTags) {
+    return extracted;
+  }
   // Only apply keyword-based error rewrites when the assistant message is actually an error.
-  // Otherwise normal prose that *mentions* errors (e.g. "context overflow") can get clobbered.
   // Gate on stopReason only — a non-error response with an errorMessage set (e.g. from a
   // background tool failure) should not have its content rewritten (#13935).
   const errorContext = msg.stopReason === "error";
@@ -357,6 +379,8 @@ export function splitThinkingTaggedText(text: string): ThinkTaggedSplitBlock[] |
   return blocks;
 }
 
+const BARE_THINK_PREFIX_RE = /^think\s*\n/i;
+
 export function promoteThinkingTagsToBlocks(message: AssistantMessage): void {
   if (!Array.isArray(message.content)) {
     return;
@@ -380,6 +404,16 @@ export function promoteThinkingTagsToBlocks(message: AssistantMessage): void {
       next.push(block);
       continue;
     }
+
+    // Gemini models sometimes emit thinking as a plain text block starting
+    // with bare "think\n" (no XML tags).  Reclassify the entire block as
+    // thinking so downstream extraction skips it.
+    if (BARE_THINK_PREFIX_RE.test(block.text)) {
+      changed = true;
+      next.push({ type: "thinking", thinking: block.text });
+      continue;
+    }
+
     const split = splitThinkingTaggedText(block.text);
     if (!split) {
       next.push(block);

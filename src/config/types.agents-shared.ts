@@ -9,6 +9,8 @@ export type AgentModelConfig =
   | {
       /** Primary model (provider/model). */
       primary?: string;
+      /** Model override for compaction (provider/model). Falls back to primary. */
+      compact?: string;
       /** Per-agent model fallbacks (provider/model). */
       fallbacks?: string[];
     };

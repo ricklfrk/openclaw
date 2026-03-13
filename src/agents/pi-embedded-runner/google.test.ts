@@ -24,7 +24,7 @@ describe("sanitizeToolsForGoogle", () => {
     expect(params.properties?.foo?.format).toBeUndefined();
   };
 
-  it("strips unsupported schema keywords for Google providers", () => {
+  it("strips unsupported schema keywords for google-gemini-cli provider", () => {
     const tool = createTool({
       type: "object",
       additionalProperties: false,
@@ -38,6 +38,45 @@ describe("sanitizeToolsForGoogle", () => {
     const [sanitized] = sanitizeToolsForGoogle({
       tools: [tool],
       provider: "google-gemini-cli",
+    });
+    expectFormatRemoved(sanitized, "additionalProperties");
+  });
+
+  it("strips unsupported schema keywords for google-generative-ai modelApi", () => {
+    const tool = createTool({
+      type: "object",
+      patternProperties: { "^x-": { type: "string" } },
+      properties: {
+        foo: {
+          type: "string",
+          format: "uuid",
+        },
+      },
+    });
+    const [sanitized] = sanitizeToolsForGoogle({
+      tools: [tool],
+      provider: "google",
+      modelApi: "google-generative-ai",
+    });
+    expectFormatRemoved(sanitized, "patternProperties");
+  });
+
+  it("strips unsupported schema keywords for gemini models via OpenAI proxy", () => {
+    const tool = createTool({
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        foo: {
+          type: "string",
+          format: "uuid",
+        },
+      },
+    });
+    const [sanitized] = sanitizeToolsForGoogle({
+      tools: [tool],
+      provider: "myapi",
+      modelApi: "openai-completions",
+      modelId: "gemini-3-flash-preview",
     });
     expectFormatRemoved(sanitized, "additionalProperties");
   });

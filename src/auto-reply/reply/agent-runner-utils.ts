@@ -90,6 +90,16 @@ export const formatBunFetchSocketError = (message: string) => {
   ].join("\n");
 };
 
+export function resolveFallbackRetryPrompt(params: {
+  body: string;
+  isFallbackRetry: boolean;
+}): string {
+  if (!params.isFallbackRetry) {
+    return params.body;
+  }
+  return "Continue where you left off. The previous model attempt failed or timed out.";
+}
+
 export const formatResponseUsageLine = (params: {
   usage?: NormalizedUsage;
   showCost: boolean;
@@ -151,8 +161,8 @@ export const appendUsageLine = (payloads: ReplyPayload[], line: string): ReplyPa
   return updated;
 };
 
-export const resolveEnforceFinalTag = (run: FollowupRun["run"], provider: string) =>
-  Boolean(run.enforceFinalTag || isReasoningTagProvider(provider));
+export const resolveEnforceFinalTag = (run: FollowupRun["run"], provider: string, model?: string) =>
+  Boolean(run.enforceFinalTag || isReasoningTagProvider(provider, model));
 
 export function resolveModelFallbackOptions(run: FollowupRun["run"]) {
   return {
@@ -185,7 +195,7 @@ export function buildEmbeddedRunBaseParams(params: {
     ownerNumbers: params.run.ownerNumbers,
     inputProvenance: params.run.inputProvenance,
     senderIsOwner: params.run.senderIsOwner,
-    enforceFinalTag: resolveEnforceFinalTag(params.run, params.provider),
+    enforceFinalTag: resolveEnforceFinalTag(params.run, params.provider, params.model),
     provider: params.provider,
     model: params.model,
     ...params.authProfile,

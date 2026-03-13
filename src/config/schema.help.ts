@@ -201,9 +201,9 @@ export const FIELD_HELP: Record<string, string> = {
   "acp.runtime.installCommand":
     "Optional operator install/setup command shown by `/acp install` and `/acp doctor` when ACP backend wiring is missing.",
   "agents.list.*.skills":
-    "Optional allowlist of skills for this agent (omit = all skills; empty = no skills).",
+    "Optional allowlist of skills for this agent (omit = all skills; empty = no skills). The number of skills actually included in the system prompt may be lower if the combined skill list exceeds skills.limits.maxSkillsPromptChars; increase that limit if your agent sees fewer skills than selected.",
   "agents.list[].skills":
-    "Optional allowlist of skills for this agent (omit = all skills; empty = no skills).",
+    "Optional allowlist of skills for this agent (omit = all skills; empty = no skills). The number of skills actually included in the system prompt may be lower if the combined skill list exceeds skills.limits.maxSkillsPromptChars; increase that limit if your agent sees fewer skills than selected.",
   agents:
     "Agent runtime configuration root covering defaults and explicit agent entries used for routing and execution context. Keep this section explicit so model/tool behavior stays predictable across multi-agent workflows.",
   "agents.defaults":
@@ -383,7 +383,7 @@ export const FIELD_HELP: Record<string, string> = {
   "gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback":
     "DANGEROUS toggle that enables Host-header based origin fallback for Control UI/WebChat websocket checks. This mode is supported when your deployment intentionally relies on Host-header origin policy; explicit gateway.controlUi.allowedOrigins remains the recommended hardened default.",
   "gateway.controlUi.allowInsecureAuth":
-    "Loosens strict browser auth checks for Control UI when you must run a non-standard setup. Keep this off unless you trust your network and proxy path, because impersonation risk is higher.",
+    "Allows Control UI connections without device identity from localhost and private networks (LAN, Tailnet, link-local). Public internet connections still require HTTPS. Enable this for intranet access over plain HTTP.",
   "gateway.controlUi.dangerouslyDisableDeviceAuth":
     "Disables Control UI device identity checks and relies on token/password only. Use only for short-lived debugging on trusted networks, then turn it off immediately.",
   "gateway.push":
@@ -465,7 +465,7 @@ export const FIELD_HELP: Record<string, string> = {
   "bindings[].match.peer":
     "Optional peer matcher for specific conversations including peer kind and peer id. Use this when only one direct/group/channel target should be pinned to an agent.",
   "bindings[].match.peer.kind":
-    'Peer conversation type: "direct", "group", "channel", or legacy "dm" (deprecated alias for direct). Prefer "direct" for new configs and keep kind aligned with channel semantics.',
+    'Peer conversation type: "direct", "group", "channel", "webhook" (e.g. external webhook sources like Paperclip), or legacy "dm" (deprecated alias for direct). Prefer "direct" for new configs and keep kind aligned with channel semantics.',
   "bindings[].match.peer.id":
     "Conversation identifier used with peer matching, such as a chat ID, channel ID, or group ID from the provider. Keep this exact to avoid silent non-matches.",
   "bindings[].match.guildId":
@@ -618,6 +618,10 @@ export const FIELD_HELP: Record<string, string> = {
     "Enable filesystem watching for skill-definition changes so updates can be applied without full process restart. Keep enabled in development workflows and disable in immutable production images.",
   "skills.load.watchDebounceMs":
     "Debounce window in milliseconds for coalescing rapid skill file changes before reload logic runs. Increase to reduce reload churn on frequent writes, or lower for faster edit feedback.",
+  "skills.limits.maxSkillsPromptChars":
+    "Maximum total characters for the skills block in the system prompt (default 30000). If the combined name+description+location for the selected skills exceeds this, only as many skills as fit are included; the agent then sees fewer than the allowlist. Increase (e.g. 50000) when an agent has many or long-description skills so all selected skills appear.",
+  "skills.limits.maxSkillsInPrompt":
+    "Maximum number of skills included in the prompt (default 150). Applied before the character limit; rarely needs changing.",
   approvals:
     "Approval routing controls for forwarding exec approval requests to chat destinations outside the originating session. Keep this disabled unless operators need explicit out-of-band approval visibility.",
   "approvals.exec":
