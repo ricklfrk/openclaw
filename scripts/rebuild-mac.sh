@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
-# Quick restart: kill everything → incremental build → package → install → launch.
-# Skips clean dist (incremental) for faster turnaround than rebuild-mac.sh.
-# Usage: scripts/restart-mac.sh [--clean]
+# Clean rebuild: kill everything → clean dist → full build → package → install → launch.
+# Usage: scripts/rebuild-mac.sh
 
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-# Load shell env (e.g. SIGN_IDENTITY from ~/.zshrc) when present.
-# Disable all error flags before sourcing: zsh-specific syntax in .zshrc (e.g. bun/openclaw
-# completion files) causes bash parser errors at parse-time, which exit the script before
-# `|| true` can suppress them. Restoring flags immediately after.
+# Load shell env (e.g. SIGN_IDENTITY from ~/.zshrc) when present
 if [[ -f "$HOME/.zshrc" ]] && [[ -z "${REBUILD_MAC_SKIP_ZSHRC:-}" ]]; then
+  # Disable all error flags before sourcing: zsh-specific syntax in .zshrc (e.g. bun/openclaw
+  # completion files) causes bash parser errors at parse-time, which exit the script before
+  # `|| true` can suppress them. Restoring flags immediately after.
   set +euo pipefail
   # shellcheck source=/dev/null
   source "$HOME/.zshrc" 2>/dev/null || true
@@ -22,19 +21,6 @@ fi
 log()  { printf '\033[1;36m==> %s\033[0m\n' "$*"; }
 fail() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
-CLEAN=0
-for arg in "$@"; do
-  case "${arg}" in
-    --clean) CLEAN=1 ;;
-    --help|-h)
-      log "Usage: $(basename "$0") [--clean]"
-      log "  --clean  Remove dist/ before building (same as rebuild-mac.sh)"
-      exit 0
-      ;;
-    *) ;;
-  esac
-done
-
 # 1) Kill OpenClaw app + gateway + signal-cli
 log "Killing OpenClaw and signal-cli"
 osascript -e 'tell application "OpenClaw" to quit' 2>/dev/null || true
@@ -43,32 +29,31 @@ pkill -9 -f "OpenClaw.app/Contents/MacOS/OpenClaw" 2>/dev/null || true
 pkill -x "OpenClaw" 2>/dev/null || true
 pkill -9 -f "openclaw-gateway" 2>/dev/null || true
 pkill -9 -f "signal-cli" 2>/dev/null || true
-launchctl bootout gui/"$UID"/ai.openclaw.gateway 2>/dev/null || true
-launchctl bootout gui/"$UID"/ai.openclaw.node 2>/dev/null || true
 sleep 1
 log "All processes killed"
 
-# 2) Optionally clean dist
-if [ "$CLEAN" -eq 1 ]; then
-  log "Cleaning dist/"
-  rm -rf dist/
-fi
-log "Removing /Applications/OpenClaw.app"
+# 2) Clean dist and installed app
+log "Cleaning dist/ and /Applications/OpenClaw.app"
+rm -rf dist/
 rm -rf /Applications/OpenClaw.app
 
-# 3) TypeScript build (incremental unless --clean)
+# 3) Full TypeScript build
 log "Running pnpm build"
 if ! pnpm build; then
   fail "pnpm build failed"
 fi
 log "Build succeeded"
 
-# 3b) Sync dev build to installed CLI shim
+# 3b) Sync dev build to the installed CLI so the Mac app shim stays current.
+# ~/.openclaw/bin/openclaw is a shim that always invokes the installed copy;
+# without this step, gateway management commands use a stale CLI version.
 INSTALLED_CLI_DIR="$HOME/.openclaw/lib/node_modules/openclaw"
 if [ -d "$INSTALLED_CLI_DIR" ]; then
   log "Syncing dev build to installed CLI ($INSTALLED_CLI_DIR)"
   rsync -a --delete dist/ "$INSTALLED_CLI_DIR/dist/"
   cp package.json "$INSTALLED_CLI_DIR/package.json"
+  # Sync workspace extensions (nsfw, regex-replace, etc.) that the published
+  # npm package doesn't include; without them the CLI shim rejects the config.
   rsync -a --exclude='node_modules' extensions/ "$INSTALLED_CLI_DIR/extensions/" --ignore-existing
   log "Installed CLI updated"
 fi
@@ -88,7 +73,8 @@ log "Installing to /Applications"
 cp -R dist/OpenClaw.app /Applications/OpenClaw.app
 log "Installed"
 
-# 6) Install gateway daemon from dev repo
+# 6) Install gateway daemon from dev repo so the LaunchAgent plist points here
+#    (not at ~/.openclaw/lib/ which lacks workspace extensions).
 log "Installing gateway daemon from dev repo"
 if ! node openclaw.mjs daemon install --force --runtime node; then
   log "Warning: daemon install failed (gateway may need manual start)"
@@ -98,7 +84,7 @@ fi
 log "Launching OpenClaw"
 open /Applications/OpenClaw.app
 
-# 8) Verify app
+# 8) Verify
 sleep 3
 if pgrep -f "OpenClaw.app/Contents/MacOS/OpenClaw" >/dev/null 2>&1; then
   log "OpenClaw is running ✓"
@@ -106,7 +92,7 @@ else
   fail "OpenClaw failed to start — check Console.app"
 fi
 
-# 9) Verify gateway
+# Show gateway status
 sleep 5
 if launchctl print gui/"$UID" 2>/dev/null | grep -q "ai.openclaw.gateway"; then
   log "Gateway service is loaded ✓"
