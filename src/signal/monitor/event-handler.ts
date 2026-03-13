@@ -56,6 +56,16 @@ import type {
   SignalReceivePayload,
 } from "./event-handler.types.js";
 import { renderSignalMentions } from "./mentions.js";
+import { signalDeliveryWithRetry } from "./signal-enhancements.js";
+import {
+  buildEnhancedMessage,
+  checkRequireMention,
+  loadSignalMediaCache,
+  preCacheGroupMedia,
+  hasNativeSignalMention,
+  stripMentionPlaceholders,
+  type SignalEnhancementDeps,
+} from "./signal-enhancements.js";
 
 function formatAttachmentKindCount(kind: string, count: number): string {
   if (kind === "attachment") {
@@ -76,12 +86,19 @@ function formatAttachmentSummaryPlaceholder(contentTypes: Array<string | undefin
   return `[${parts.join(" + ")} attached]`;
 }
 
-export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
+export function createSignalEventHandler(
+  deps: SignalEventHandlerDeps & { enhancementDeps?: SignalEnhancementDeps },
+) {
+  // Signal enhancements: load persistent media cache on startup
+  if (deps.enhancementDeps) {
+    void loadSignalMediaCache();
+  }
   type SignalInboundEntry = {
     senderName: string;
     senderDisplay: string;
     senderRecipient: string;
     senderPeerId: string;
+    senderUuid?: string;
     groupId?: string;
     groupName?: string;
     isGroup: boolean;
@@ -184,7 +201,8 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
       ConversationLabel: fromLabel,
       GroupSubject: entry.isGroup ? (entry.groupName ?? undefined) : undefined,
       SenderName: entry.senderName,
-      SenderId: entry.senderDisplay,
+      SenderId: entry.senderUuid ? `uuid:${entry.senderUuid}` : entry.senderDisplay,
+      SenderE164: entry.senderDisplay,
       Provider: "signal" as const,
       Surface: "signal" as const,
       MessageSid: entry.messageId,
@@ -460,6 +478,7 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
       deps.runtime.error?.(`failed to parse event: ${String(err)}`);
       return;
     }
+
     if (payload?.exception?.message) {
       deps.runtime.error?.(`receive exception: ${payload.exception.message}`);
     }
@@ -500,8 +519,6 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
         ? dataMessage?.reaction
         : null;
 
-    // Replace ￼ (object replacement character) with @uuid or @phone from mentions
-    // Signal encodes mentions as the object replacement character; hydrate them from metadata first.
     const rawMessage = dataMessage?.message ?? "";
     const normalizedMessage = renderSignalMentions(rawMessage, dataMessage?.mentions);
     const messageText = normalizedMessage.trim();
@@ -558,12 +575,16 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
         senderName: envelope.sourceName ?? undefined,
         accountId: deps.accountId,
         sendPairingReply: async (text) => {
-          await sendMessageSignal(`signal:${senderRecipient}`, text, {
-            baseUrl: deps.baseUrl,
-            account: deps.account,
-            maxBytes: deps.mediaMaxBytes,
-            accountId: deps.accountId,
-          });
+          await signalDeliveryWithRetry(
+            () =>
+              sendMessageSignal(`signal:${senderRecipient}`, text, {
+                baseUrl: deps.baseUrl,
+                account: deps.account,
+                maxBytes: deps.mediaMaxBytes,
+                accountId: deps.accountId,
+              }),
+            `pairing reply to ${senderRecipient}`,
+          );
         },
         log: logVerbose,
       });
@@ -585,11 +606,48 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
       }
     }
 
+    // Pre-resolve agent route so requireMention can use the agent's identity.name patterns
+    const route = resolveAgentRoute({
+      cfg: deps.cfg,
+      channel: "signal",
+      accountId: deps.accountId,
+      peer: {
+        kind: isGroup ? "group" : "direct",
+        id: isGroup ? (groupId ?? "unknown") : senderPeerId,
+      },
+    });
+
+    // Signal enhancements: pre-cache group media + requireMention gate
+    const eDeps = deps.enhancementDeps;
+    if (eDeps && isGroup) {
+      await preCacheGroupMedia({
+        dataMessage,
+        senderRecipient,
+        senderAllowId,
+        groupId,
+        deps: eDeps,
+      });
+    }
+    if (
+      eDeps &&
+      checkRequireMention({
+        dataMessage,
+        isGroup,
+        groupId,
+        deps: eDeps,
+        agentId: route.agentId,
+      })
+    ) {
+      return;
+    }
+
     const useAccessGroups = deps.cfg.commands?.useAccessGroups !== false;
     const commandDmAllow = isGroup ? deps.allowFrom : effectiveDmAllow;
     const ownerAllowedForCommands = isSignalSenderAllowed(sender, commandDmAllow);
     const groupAllowedForCommands = isSignalSenderAllowed(sender, effectiveGroupAllow);
-    const hasControlCommandInMessage = hasControlCommand(messageText, deps.cfg);
+    // Strip U+FFFC mention placeholders so commands like "@bot /new" detect correctly
+    const textForCmd = eDeps ? stripMentionPlaceholders(messageText) : messageText;
+    const hasControlCommandInMessage = hasControlCommand(textForCmd, deps.cfg);
     const commandGate = resolveControlCommandGate({
       useAccessGroups,
       authorizers: [
@@ -609,19 +667,16 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
       });
       return;
     }
-
-    const route = resolveAgentRoute({
-      cfg: deps.cfg,
-      channel: "signal",
-      accountId: deps.accountId,
-      peer: {
-        kind: isGroup ? "group" : "direct",
-        id: isGroup ? (groupId ?? "unknown") : senderPeerId,
-      },
-    });
     const mentionRegexes = buildMentionRegexes(deps.cfg, route.agentId);
-    const wasMentioned = isGroup && matchesMentionPatterns(messageText, mentionRegexes);
+    // Detect both text-based mention patterns AND Signal native @mentions
+    const nativeMention =
+      isGroup && eDeps && hasNativeSignalMention(dataMessage, deps.account, deps.accountId);
+    const wasMentioned =
+      isGroup && (matchesMentionPatterns(messageText, mentionRegexes) || Boolean(nativeMention));
+    // When custom enhancement deps are present, checkRequireMention (above) is
+    // the sole mention gate — skip upstream's gating to avoid conflicting defaults.
     const requireMention =
+      !eDeps &&
       isGroup &&
       resolveChannelGroupRequireMention({
         cfg: deps.cfg,
@@ -654,8 +709,6 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
         if (!dataMessage.attachments?.length) {
           return "";
         }
-        // When we're skipping a message we intentionally avoid downloading attachments.
-        // Still record a useful placeholder for pending-history context.
         if (deps.ignoreAttachments) {
           return "<media:attachment>";
         }
@@ -733,7 +786,36 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
       }
     }
 
-    const bodyText = messageText || placeholder || dataMessage.quote?.text?.trim() || "";
+    // Signal enhancements: sticker, quote, U+FFFC stripping, enhanced bodyText
+    let bodyText: string;
+    if (eDeps) {
+      const enhanced = await buildEnhancedMessage({
+        dataMessage,
+        messageText,
+        mediaPath,
+        mediaType,
+        mediaPaths: mediaPaths.length > 0 ? mediaPaths : undefined,
+        mediaTypes: mediaTypes.length > 0 ? mediaTypes : undefined,
+        placeholder,
+        senderRecipient,
+        groupId,
+        deps: eDeps,
+      });
+      bodyText = enhanced.bodyText;
+      mediaPath = enhanced.mediaPath;
+      mediaType = enhanced.mediaType;
+      mediaPaths.length = 0;
+      if (enhanced.mediaPaths) {
+        mediaPaths.push(...enhanced.mediaPaths);
+      }
+      mediaTypes.length = 0;
+      if (enhanced.mediaTypes) {
+        mediaTypes.push(...enhanced.mediaTypes);
+      }
+      placeholder = enhanced.placeholder;
+    } else {
+      bodyText = messageText || placeholder || dataMessage.quote?.text?.trim() || "";
+    }
     if (!bodyText) {
       return;
     }
@@ -771,6 +853,7 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
       senderDisplay,
       senderRecipient,
       senderPeerId,
+      senderUuid: sender.kind === "phone" ? sender.uuid : undefined,
       groupId,
       groupName,
       isGroup,
