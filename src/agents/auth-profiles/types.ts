@@ -38,6 +38,7 @@ export type AuthProfileCredential = ApiKeyCredential | TokenCredential | OAuthCr
 export type AuthProfileFailureReason =
   | "auth"
   | "auth_permanent"
+  | "empty_response"
   | "format"
   | "overloaded"
   | "rate_limit"

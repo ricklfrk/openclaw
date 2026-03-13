@@ -161,9 +161,14 @@ export async function writeOAuthCredentials(
   agentDir?: string,
   options?: WriteOAuthCredentialsOptions,
 ): Promise<string> {
-  const email =
-    typeof creds.email === "string" && creds.email.trim() ? creds.email.trim() : "default";
-  const profileId = `${provider}:${email}`;
+  // Prefer email; fall back to accountId (e.g. Codex returns accountId not email).
+  const identifier =
+    (typeof creds.email === "string" && creds.email.trim() ? creds.email.trim() : null) ??
+    (typeof creds.accountId === "string" && creds.accountId.trim()
+      ? creds.accountId.trim()
+      : null) ??
+    "default";
+  const profileId = `${provider}:${identifier}`;
   const resolvedAgentDir = path.resolve(resolveAuthAgentDir(agentDir));
   const targetAgentDirs = options?.syncSiblingAgents
     ? resolveSiblingAgentDirs(resolvedAgentDir)

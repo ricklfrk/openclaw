@@ -86,7 +86,9 @@ export async function updateAuthProfileStoreWithLock(params: {
 
   try {
     return await withFileLock(authPath, AUTH_STORE_LOCK_OPTIONS, async () => {
-      const store = ensureAuthProfileStore(params.agentDir);
+      // Always read from disk inside the lock to avoid stale runtime cache
+      // snapshots overwriting concurrent writes (e.g. stampProfileLastUsed).
+      const store = loadAuthProfileStoreForAgent(params.agentDir);
       const shouldSave = params.updater(store);
       if (shouldSave) {
         saveAuthProfileStore(store, params.agentDir);
