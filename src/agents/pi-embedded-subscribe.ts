@@ -6,6 +6,7 @@ import { emitAgentEvent } from "../infra/agent-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { InlineCodeState } from "../markdown/code-spans.js";
 import { buildCodeSpanIndex, createInlineCodeState } from "../markdown/code-spans.js";
+import { repairMalformedReasoningTags } from "../shared/text/reasoning-tags.js";
 import { EmbeddedBlockChunker } from "./pi-embedded-block-chunker.js";
 import {
   isMessagingToolDuplicateNormalized,
@@ -180,6 +181,22 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     chunkerHasBuffered: boolean;
   }) => {
     const { text, addedDuringMessage, chunkerHasBuffered } = args;
+
+    // Skip text already delivered via messaging tool (only check the last sent
+    // text). Prevents duplicate delivery when the agent repeats its tool-sent
+    // message as a normal response in the same turn.
+    if (text && messagingToolSentTextsNormalized.length > 0) {
+      const normalizedText = normalizeTextForComparison(text);
+      const lastSent =
+        messagingToolSentTextsNormalized[messagingToolSentTextsNormalized.length - 1];
+      if (isMessagingToolDuplicateNormalized(normalizedText, [lastSent])) {
+        log.debug(
+          `finalizeAssistantTexts: skipping text already sent via messaging tool: "${text.slice(0, 60)}..."`,
+        );
+        state.assistantTextBaseline = assistantTexts.length;
+        return;
+      }
+    }
 
     // If we're not streaming block replies, ensure the final payload includes
     // the final text even when interim streaming was enabled.
@@ -365,6 +382,18 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     emitToolResultMessage(toolName, message);
   };
 
+  /**
+   * Returns true when a regex match is immediately surrounded by backticks,
+   * i.e. the character before the match is `` ` `` and the character after is `` ` ``.
+   * Used in enforceFinalTag mode (where general code-span detection is disabled to
+   * avoid emoticon false-positives) to skip tags like `</think>` or `<final>` that
+   * the model wrote as code references inside its reasoning.
+   * Emoticon backticks like (つ´ω`)つ are safe because they don't immediately
+   * flank a tag — no false positives.
+   */
+  const isTagBacktickWrapped = (src: string, idx: number, len: number): boolean =>
+    idx > 0 && src[idx - 1] === "`" && idx + len < src.length && src[idx + len] === "`";
+
   const stripBlockTags = (
     text: string,
     state: { thinking: boolean; final: boolean; inlineCode?: InlineCodeState },
@@ -373,28 +402,130 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
       return text;
     }
 
+    // Repair malformed sequences (e.g. unclosed <think> before <final>)
+    const repaired = repairMalformedReasoningTags(text);
     const inlineStateStart = state.inlineCode ?? createInlineCodeState();
-    const codeSpans = buildCodeSpanIndex(text, inlineStateStart);
+
+    // Bare "think\n" prefix: Gemini models sometimes emit internal reasoning
+    // as a plain text block starting with "think\n" (no XML tags). Transition
+    // to thinking mode so the standard pass-2 logic suppresses the content.
+    // If a </think> close tag appears later the regex loop will transition back.
+    if (!state.thinking && /^think\s*\n/i.test(repaired)) {
+      state.thinking = true;
+    }
+
+    // Code-span detection: only used for the non-enforcement path where we
+    // want to preserve literal <think>/<final> tags inside code blocks.
+    // In enforcement mode we skip code-span detection for both <think> and
+    // <final> tags because emoticon backticks (e.g. (つ´ω`)つ) can pair
+    // across <think>/<final> boundaries to create false code spans that mask
+    // closing tags, causing thinking content to leak.
+    const useCodeSpans = !params.enforceFinalTag;
+    const codeSpans = useCodeSpans ? buildCodeSpanIndex(repaired, inlineStateStart) : null;
 
     // 1. Handle <think> blocks (stateful, strip content inside)
-    let processed = "";
+    //
+    // Also handles orphaned </think> (close tag without a preceding open tag
+    // in the current chunk).  Gemini models sometimes split thinking across a
+    // structured `thinking` content block and a subsequent `text` block, so the
+    // text block starts mid-thought with no <think> but ends with </think>.
+    // In that case we strip everything up to and including the *last*
+    // orphaned </think> to prevent reasoning content from leaking.
+
+    // Pass 1: detect orphaned </think> tags (close without prior open)
+    let sawOpen = state.thinking;
+    let lastOrphanedCloseEnd = -1;
     THINKING_TAG_SCAN_RE.lastIndex = 0;
-    let lastIndex = 0;
-    let inThinking = state.thinking;
-    for (const match of text.matchAll(THINKING_TAG_SCAN_RE)) {
+    for (const match of repaired.matchAll(THINKING_TAG_SCAN_RE)) {
       const idx = match.index ?? 0;
-      if (codeSpans.isInside(idx)) {
+      if (codeSpans?.isInside(idx)) {
         continue;
       }
-      if (!inThinking) {
-        processed += text.slice(lastIndex, idx);
+      if (isTagBacktickWrapped(repaired, idx, match[0].length)) {
+        continue;
       }
       const isClose = match[1] === "/";
-      inThinking = !isClose;
-      lastIndex = idx + match[0].length;
+      if (!isClose) {
+        sawOpen = true;
+      }
+      if (isClose && !sawOpen) {
+        lastOrphanedCloseEnd = idx + match[0].length;
+      }
     }
-    if (!inThinking) {
-      processed += text.slice(lastIndex);
+
+    // If orphaned </think> found, skip everything before it
+    const thinkInput = lastOrphanedCloseEnd > 0 ? repaired.slice(lastOrphanedCloseEnd) : repaired;
+    const thinkOffset = lastOrphanedCloseEnd > 0 ? lastOrphanedCloseEnd : 0;
+
+    // Pass 2: thinking tag processing
+    let processed = "";
+    let inThinking = lastOrphanedCloseEnd > 0 ? false : state.thinking;
+
+    if (params.enforceFinalTag) {
+      // Enforcement mode: first-open / last-close strategy.
+      // The toggle approach (close on every </think>) is vulnerable when the
+      // model mentions "</think>" literally inside thinking — the parser exits
+      // thinking prematurely and the leaked text gets captured by a subsequent
+      // <final> tag. Using the LAST </think> as the boundary is safe because
+      // enforcement mode only delivers <final> content anyway, so any text
+      // between thinking blocks that we over-strip would be discarded regardless.
+      THINKING_TAG_SCAN_RE.lastIndex = 0;
+      const allMatches = [...thinkInput.matchAll(THINKING_TAG_SCAN_RE)].filter(
+        (m) =>
+          !codeSpans?.isInside((m.index ?? 0) + thinkOffset) &&
+          !isTagBacktickWrapped(thinkInput, m.index ?? 0, m[0].length),
+      );
+
+      const opens: number[] = [];
+      const closes: { end: number }[] = [];
+      for (const m of allMatches) {
+        if (m[1] === "/") {
+          closes.push({ end: (m.index ?? 0) + m[0].length });
+        } else {
+          opens.push(m.index ?? 0);
+        }
+      }
+
+      const thinkStart = inThinking ? 0 : opens.length > 0 ? opens[0] : -1;
+      const lastClose = closes.length > 0 ? closes[closes.length - 1] : null;
+
+      if (thinkStart >= 0 && lastClose && lastClose.end > thinkStart) {
+        const before = inThinking ? "" : thinkInput.slice(0, thinkStart);
+        // Check for a reopened <think> after the last </think>
+        const trailingOpen = opens.find((pos) => pos >= lastClose.end);
+        if (trailingOpen !== undefined) {
+          processed = before + thinkInput.slice(lastClose.end, trailingOpen);
+          inThinking = true;
+        } else {
+          processed = before + thinkInput.slice(lastClose.end);
+          inThinking = false;
+        }
+      } else if (thinkStart >= 0) {
+        // Open but no close — still in thinking
+        processed = inThinking ? "" : thinkInput.slice(0, thinkStart);
+        inThinking = true;
+      } else {
+        processed = thinkInput;
+      }
+    } else {
+      // Non-enforcement: toggle-based approach (preserves text between blocks)
+      THINKING_TAG_SCAN_RE.lastIndex = 0;
+      let lastIndex = 0;
+      for (const match of thinkInput.matchAll(THINKING_TAG_SCAN_RE)) {
+        const idx = match.index ?? 0;
+        if (codeSpans?.isInside(idx + thinkOffset)) {
+          continue;
+        }
+        if (!inThinking) {
+          processed += thinkInput.slice(lastIndex, idx);
+        }
+        const isClose = match[1] === "/";
+        inThinking = !isClose;
+        lastIndex = idx + match[0].length;
+      }
+      if (!inThinking) {
+        processed += thinkInput.slice(lastIndex);
+      }
     }
     state.thinking = inThinking;
 
@@ -402,14 +533,15 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     // If enforcement is disabled, we still strip the tags themselves to prevent
     // hallucinations (e.g. Minimax copying the style) from leaking, but we
     // do not enforce buffering/extraction logic.
-    const finalCodeSpans = buildCodeSpanIndex(processed, inlineStateStart);
     if (!params.enforceFinalTag) {
+      const finalCodeSpans = buildCodeSpanIndex(processed, inlineStateStart);
       state.inlineCode = finalCodeSpans.inlineState;
       FINAL_TAG_SCAN_RE.lastIndex = 0;
       return stripTagsOutsideCodeSpans(processed, FINAL_TAG_SCAN_RE, finalCodeSpans.isInside);
     }
 
-    // If enforcement is enabled, only return text that appeared inside a <final> block.
+    // Enforcement mode: extract only text inside <final> blocks.
+    // No code-span detection — <final> is our protocol tag, not Markdown.
     let result = "";
     FINAL_TAG_SCAN_RE.lastIndex = 0;
     let lastFinalIndex = 0;
@@ -418,18 +550,17 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
 
     for (const match of processed.matchAll(FINAL_TAG_SCAN_RE)) {
       const idx = match.index ?? 0;
-      if (finalCodeSpans.isInside(idx)) {
-        continue;
-      }
       const isClose = match[1] === "/";
 
+      if (isTagBacktickWrapped(processed, idx, match[0].length)) {
+        continue;
+      }
+
       if (!inFinal && !isClose) {
-        // Found <final> start tag.
         inFinal = true;
         everInFinal = true;
         lastFinalIndex = idx + match[0].length;
       } else if (inFinal && isClose) {
-        // Found </final> end tag.
         result += processed.slice(lastFinalIndex, idx);
         inFinal = false;
         lastFinalIndex = idx + match[0].length;
@@ -441,18 +572,22 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     }
     state.final = inFinal;
 
-    // Strict Mode: If enforcing final tags, we MUST NOT return content unless
-    // we have seen a <final> tag. Otherwise, we leak "thinking out loud" text
-    // (e.g. "**Locating Manulife**...") that the model emitted without <think> tags.
     if (!everInFinal) {
       return "";
     }
 
-    // Hardened Cleanup: Remove any remaining <final> tags that might have been
-    // missed (e.g. nested tags or hallucinations) to prevent leakage.
-    const resultCodeSpans = buildCodeSpanIndex(result, inlineStateStart);
-    state.inlineCode = resultCodeSpans.inlineState;
-    return stripTagsOutsideCodeSpans(result, FINAL_TAG_SCAN_RE, resultCodeSpans.isInside);
+    // Hardened Cleanup: strip any remaining <final> tags (nested/hallucinated).
+    // No code-span gating needed in enforcement mode.
+    FINAL_TAG_SCAN_RE.lastIndex = 0;
+    state.inlineCode = buildCodeSpanIndex(result, inlineStateStart).inlineState;
+    let cleaned = "";
+    let cleanLastIndex = 0;
+    for (const match of result.matchAll(FINAL_TAG_SCAN_RE)) {
+      cleaned += result.slice(cleanLastIndex, match.index ?? 0);
+      cleanLastIndex = (match.index ?? 0) + match[0].length;
+    }
+    cleaned += result.slice(cleanLastIndex);
+    return cleaned;
   };
 
   const stripTagsOutsideCodeSpans = (
