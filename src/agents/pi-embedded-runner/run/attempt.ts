@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import type { AgentMessage, StreamFn } from "@mariozechner/pi-agent-core";
+import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
 import {
   createAgentSession,
@@ -8,7 +9,6 @@ import {
   SessionManager,
 } from "@mariozechner/pi-coding-agent";
 import { resolveHeartbeatPrompt } from "../../../auto-reply/heartbeat.js";
-import { promoteHistoricalToolCallThinkingToBlocks } from "../../custom-context-to-blocks.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
 import type { OpenClawConfig } from "../../../config/config.js";
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
@@ -48,6 +48,7 @@ import {
   resolveChannelMessageToolHints,
 } from "../../channel-tools.js";
 import { ensureCustomApiRegistered } from "../../custom-api-registry.js";
+import { promoteHistoricalToolCallThinkingToBlocks } from "../../custom-context-to-blocks.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../defaults.js";
 import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
@@ -414,14 +415,14 @@ export function wrapOllamaCompatNumCtx(baseFn: StreamFn | undefined, numCtx: num
       ...options,
       onPayload: (payload: unknown) => {
         if (!payload || typeof payload !== "object") {
-          return options?.onPayload?.(payload, model);
+          return options?.onPayload?.(payload);
         }
         const payloadRecord = payload as Record<string, unknown>;
         if (!payloadRecord.options || typeof payloadRecord.options !== "object") {
           payloadRecord.options = {};
         }
         (payloadRecord.options as Record<string, unknown>).num_ctx = numCtx;
-        return options?.onPayload?.(payload, model);
+        return options?.onPayload?.(payload);
       },
     });
 }
@@ -1068,7 +1069,9 @@ function promoteHistoricalToolCallThinkingInMessage(message: unknown): void {
   promoteHistoricalToolCallThinkingToBlocks(assistantMessage);
   if (
     (assistantMessage as { stopReason?: unknown }).stopReason === "tool_call" &&
-    assistantMessage.content.some((block) => block?.type === "toolCall")
+    assistantMessage.content.some(
+      (block: { type?: string } | undefined) => block?.type === "toolCall",
+    )
   ) {
     // pi-agent-core's tool loop keys off assistant tool-use turns, so normalize
     // the salvage output before the stream reaches the runtime.
