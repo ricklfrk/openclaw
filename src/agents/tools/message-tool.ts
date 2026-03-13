@@ -704,6 +704,27 @@ export function createMessageTool(options?: MessageToolOptions): AnyAgentTool {
         }
       }
 
+      // Suppress HEARTBEAT_OK / NO_REPLY sends — models sometimes use the
+      // message tool to "reply" with ack tokens instead of returning them as
+      // plain text. Sending these tokens through a channel bypasses heartbeat
+      // stripping and leaks internal tokens to the user.
+      const msgBody = (
+        typeof params.message === "string"
+          ? params.message
+          : typeof params.text === "string"
+            ? params.text
+            : ""
+      ).trim();
+      const actionRaw = readStringParam({ ...(args as Record<string, unknown>) }, "action", {
+        required: false,
+      });
+      if (actionRaw === "send" && (msgBody === "HEARTBEAT_OK" || msgBody === "NO_REPLY")) {
+        return {
+          content: [{ type: "text" as const, text: msgBody }],
+          details: [],
+        };
+      }
+
       const cfg = options?.config ?? loadConfig();
       const action = readStringParam(params, "action", {
         required: true,
