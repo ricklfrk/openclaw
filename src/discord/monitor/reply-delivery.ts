@@ -7,6 +7,7 @@ import type { MarkdownTableMode, ReplyToMode } from "../../config/types.base.js"
 import { createDiscordRetryRunner, type RetryRunner } from "../../infra/retry-policy.js";
 import { resolveRetryConfig, retryAsync, type RetryConfig } from "../../infra/retry.js";
 import { convertMarkdownTables } from "../../markdown/tables.js";
+import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import { resolveDiscordAccount } from "../accounts.js";
 import { chunkDiscordTextWithMode } from "../chunk.js";
@@ -286,10 +287,34 @@ export async function deliverDiscordReply(params: {
   const request: RetryRunner | undefined = channelId
     ? createDiscordRetryRunner({ configRetry: account.config.retry })
     : undefined;
+  const hookRunner = getGlobalHookRunner();
   let deliveredAny = false;
   for (const payload of params.replies) {
     const mediaList = payload.mediaUrls ?? (payload.mediaUrl ? [payload.mediaUrl] : []);
-    const rawText = payload.text ?? "";
+    let rawText = payload.text ?? "";
+
+    // Run message_sending plugin hook (matches Signal/Telegram/Slack paths)
+    if (hookRunner?.hasHooks("message_sending")) {
+      try {
+        const hookResult = await hookRunner.runMessageSending(
+          {
+            to: params.target,
+            content: rawText,
+            metadata: { channel: "discord", accountId: params.accountId },
+          },
+          { channelId: "discord", accountId: params.accountId ?? undefined },
+        );
+        if (hookResult?.cancel) {
+          continue;
+        }
+        if (hookResult?.content != null) {
+          rawText = hookResult.content;
+        }
+      } catch {
+        // Don't block delivery on hook failure
+      }
+    }
+
     const tableMode = params.tableMode ?? "code";
     const text = convertMarkdownTables(rawText, tableMode);
     if (!text && mediaList.length === 0) {

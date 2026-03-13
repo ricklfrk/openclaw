@@ -64,6 +64,7 @@ import {
   setHeartbeatsEnabled,
   setHeartbeatWakeHandler,
 } from "./heartbeat-wake.js";
+import { stopIdleReminder } from "./idle-reminder.js";
 import type { OutboundSendDeps } from "./outbound/deliver.js";
 import { deliverOutboundPayloads } from "./outbound/deliver.js";
 import { buildOutboundSessionContext } from "./outbound/session-context.js";
@@ -795,6 +796,8 @@ export async function runHeartbeatOnce(opts: {
       });
       // Prune the transcript to remove HEARTBEAT_OK turns
       await pruneHeartbeatTranscript(transcriptState);
+      // Agent confirmed idle - stop idle reminder
+      stopIdleReminder(sessionKey);
       const okSent = await maybeSendHeartbeatOk();
       emitHeartbeatEvent({
         status: "ok-empty",
@@ -831,6 +834,8 @@ export async function runHeartbeatOnce(opts: {
       });
       // Prune the transcript to remove HEARTBEAT_OK turns
       await pruneHeartbeatTranscript(transcriptState);
+      // Agent confirmed idle with HEARTBEAT_OK - stop idle reminder
+      stopIdleReminder(sessionKey);
       const okSent = await maybeSendHeartbeatOk();
       emitHeartbeatEvent({
         status: "ok-token",
