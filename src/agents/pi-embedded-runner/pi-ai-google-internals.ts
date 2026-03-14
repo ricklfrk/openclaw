@@ -16,25 +16,24 @@ const piAiDist = dirname(piAiIndex);
 
 const cjsRequire = createRequire(import.meta.url);
 
-const googleShared = cjsRequire(resolve(piAiDist, "providers/google-shared.js")) as Record<
-  string,
-  (...a: unknown[]) => unknown
->;
-const googleGeminiCli = cjsRequire(resolve(piAiDist, "providers/google-gemini-cli.js")) as {
-  extractRetryDelay: (errorText: string, response?: Response | Headers) => number | undefined;
-};
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const googleShared: Record<string, any> = cjsRequire(
+  resolve(piAiDist, "providers/google-shared.js"),
+);
+const googleGeminiCli: Record<string, any> = cjsRequire(
+  resolve(piAiDist, "providers/google-gemini-cli.js"),
+);
 
-export const convertMessages = googleShared.convertMessages as (...args: unknown[]) => unknown;
-export const convertTools = googleShared.convertTools as (...args: unknown[]) => unknown;
-export const isThinkingPart = googleShared.isThinkingPart as (part: unknown) => boolean;
-export const retainThoughtSignature = googleShared.retainThoughtSignature as (
-  existing: unknown,
-  incoming: unknown,
-) => unknown;
-export const mapStopReason = googleShared.mapStopReason as (reason: unknown) => unknown;
-export const mapStopReasonString = googleShared.mapStopReasonString as (reason: string) => unknown;
-export const mapToolChoice = googleShared.mapToolChoice as (choice: unknown) => unknown;
+export const convertMessages: (...args: any[]) => any = googleShared.convertMessages;
+export const convertTools: (...args: any[]) => any = googleShared.convertTools;
+export const isThinkingPart: (part: any) => boolean = googleShared.isThinkingPart;
+export const retainThoughtSignature: (existing: any, incoming: any) => any =
+  googleShared.retainThoughtSignature;
+export const mapStopReason: (reason: any) => any = googleShared.mapStopReason;
+export const mapStopReasonString: (reason: string) => any = googleShared.mapStopReasonString;
+export const mapToolChoice: (choice: any) => any = googleShared.mapToolChoice;
 export const extractRetryDelay: (
   errorText: string,
   response?: Response | Headers,
 ) => number | undefined = googleGeminiCli.extractRetryDelay;
+/* eslint-enable @typescript-eslint/no-explicit-any */
