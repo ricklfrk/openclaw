@@ -97,10 +97,13 @@ import { normalizeToolName } from "../../tool-policy.js";
 import { resolveTranscriptPolicy } from "../../transcript-policy.js";
 import { DEFAULT_BOOTSTRAP_FILENAME } from "../../workspace.js";
 import { isRunnerAbortError } from "../abort.js";
+import { wrapStreamFnWithBuffer } from "../buffered-stream.js";
 import { appendCacheTtlTimestamp, isCacheTtlEligibleProvider } from "../cache-ttl.js";
 import type { CompactEmbeddedPiSessionParams } from "../compact.js";
 import { buildEmbeddedExtensionFactories } from "../extensions.js";
 import { applyExtraParamsToAgent } from "../extra-params.js";
+import { wrapGcliNonStreaming } from "../gcli-nonstream.js";
+import { wrapGoogleNonStreaming } from "../google-nonstream.js";
 import {
   logToolSchemasForGoogle,
   sanitizeSessionHistory,
@@ -118,6 +121,7 @@ import { buildEmbeddedSandboxInfo } from "../sandbox-info.js";
 import { prewarmSessionFile, trackSessionManagerAccess } from "../session-manager-cache.js";
 import { prepareSessionManagerForRun } from "../session-manager-init.js";
 import { resolveEmbeddedRunSkillEntries } from "../skills-runtime.js";
+import { wrapStreamFnWithKeyRotation } from "../stream-key-rotation.js";
 import {
   applySystemPromptOverrideToSession,
   buildEmbeddedSystemPrompt,
@@ -2133,6 +2137,31 @@ export async function runEmbeddedAttempt(
         activeSession.agent.streamFn = anthropicPayloadLogger.wrapStreamFn(
           activeSession.agent.streamFn,
         );
+      }
+
+      // Fake-streaming wrappers (inner → outer):
+      // wrapGoogleNonStreaming / wrapGcliNonStreaming convert Google API calls
+      // to non-streaming generateContent so safety filters never truncate mid-reply.
+      // wrapStreamFnWithBuffer buffers all other providers for robust reasoning-tag
+      // stripping. wrapStreamFnWithKeyRotation must be outermost so it can replay
+      // the fully-buffered stream on a fresh key after a 429.
+      activeSession.agent.streamFn = wrapGoogleNonStreaming(activeSession.agent.streamFn);
+      activeSession.agent.streamFn = wrapGcliNonStreaming(activeSession.agent.streamFn);
+      activeSession.agent.streamFn = wrapStreamFnWithBuffer(activeSession.agent.streamFn);
+      if (
+        params.keyRotationState &&
+        params.keyRotationCandidates &&
+        params.keyRotationAuthStore &&
+        params.keyRotationResolveApiKey
+      ) {
+        activeSession.agent.streamFn = wrapStreamFnWithKeyRotation({
+          streamFn: activeSession.agent.streamFn,
+          profileCandidates: params.keyRotationCandidates,
+          resolveApiKey: params.keyRotationResolveApiKey,
+          authStore: params.keyRotationAuthStore,
+          agentDir: params.agentDir,
+          rotationState: params.keyRotationState,
+        });
       }
 
       try {
