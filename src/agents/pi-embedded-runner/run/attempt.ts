@@ -127,7 +127,7 @@ import {
   buildEmbeddedSystemPrompt,
   createSystemPromptOverride,
 } from "../system-prompt.js";
-import { dropThinkingBlocks } from "../thinking.js";
+import { dropHistoricalThinkingBlocks, dropThinkingBlocks } from "../thinking.js";
 import { collectAllowedToolNames } from "../tool-name-allowlist.js";
 import { installToolResultContextGuard } from "../tool-result-context-guard.js";
 import { splitSdkTools } from "../tool-split.js";
@@ -149,7 +149,7 @@ type PromptBuildHookRunner = {
     ctx: PluginHookAgentContext,
   ) => Promise<PluginHookBeforePromptBuildResult | undefined>;
   runBeforeAgentStart: (
-    event: { prompt: string; messages: unknown[] },
+    event: { prompt: string; messages: unknown[]; systemPrompt?: string },
     ctx: PluginHookAgentContext,
   ) => Promise<PluginHookBeforeAgentStartResult | undefined>;
 };
@@ -1241,6 +1241,7 @@ export async function resolvePromptBuildHookResult(params: {
   hookCtx: PluginHookAgentContext;
   hookRunner?: PromptBuildHookRunner | null;
   legacyBeforeAgentStartResult?: PluginHookBeforeAgentStartResult;
+  systemPrompt?: string;
 }): Promise<PluginHookBeforePromptBuildResult> {
   const promptBuildResult = params.hookRunner?.hasHooks("before_prompt_build")
     ? await params.hookRunner
@@ -1264,6 +1265,7 @@ export async function resolvePromptBuildHookResult(params: {
             {
               prompt: params.prompt,
               messages: params.messages,
+              systemPrompt: params.systemPrompt,
             },
             params.hookCtx,
           )
@@ -1608,13 +1610,20 @@ export async function runEmbeddedAttempt(
     const tools = sanitizeToolsForGoogle({
       tools: toolsEnabled ? toolsRaw : [],
       provider: params.provider,
+      modelApi: params.model.api,
+      modelId: params.modelId,
     });
     const clientTools = toolsEnabled ? params.clientTools : undefined;
     const allowedToolNames = collectAllowedToolNames({
       tools,
       clientTools,
     });
-    logToolSchemasForGoogle({ tools, provider: params.provider });
+    logToolSchemasForGoogle({
+      tools,
+      provider: params.provider,
+      modelApi: params.model.api,
+      modelId: params.modelId,
+    });
 
     const machineName = await getMachineDisplayName();
     const runtimeChannel = normalizeMessageChannel(params.messageChannel ?? params.messageProvider);
@@ -1664,7 +1673,7 @@ export async function runEmbeddedAttempt(
           })()
         : undefined;
     const sandboxInfo = buildEmbeddedSandboxInfo(sandbox, params.bashElevated);
-    const reasoningTagHint = isReasoningTagProvider(params.provider);
+    const reasoningTagHint = isReasoningTagProvider(params.provider, params.modelId);
     // Resolve channel-specific message actions for system prompt
     const channelActions = runtimeChannel
       ? listChannelSupportedActions({
@@ -1786,6 +1795,8 @@ export async function runEmbeddedAttempt(
     let sessionManager: ReturnType<typeof guardSessionManager> | undefined;
     let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
     let removeToolResultContextGuard: (() => void) | undefined;
+    let unsubscribeFn: (() => void) | undefined;
+    let attemptResultRef: EmbeddedRunAttemptResult | undefined;
     try {
       await repairSessionFileIfNeeded({
         sessionFile: params.sessionFile,
@@ -1836,6 +1847,7 @@ export async function runEmbeddedAttempt(
         cwd: effectiveWorkspace,
         agentDir,
         cfg: params.config,
+        agentId: params.agentId,
       });
       applyPiAutoCompactionGuard({
         settingsManager,
@@ -2027,6 +2039,10 @@ export async function runEmbeddedAttempt(
       // - "historical": Google/Gemini; drop from previous turns only, keeping the
       //   current tool loop's thinking so the model retains its multi-step plan.
       if (transcriptPolicy.dropThinkingBlocks) {
+        const dropFn =
+          transcriptPolicy.dropThinkingBlocksMode === "historical"
+            ? dropHistoricalThinkingBlocks
+            : dropThinkingBlocks;
         const inner = activeSession.agent.streamFn;
         activeSession.agent.streamFn = (model, context, options) => {
           const ctx = context as unknown as { messages?: unknown };
@@ -2034,7 +2050,7 @@ export async function runEmbeddedAttempt(
           if (!Array.isArray(messages)) {
             return inner(model, context, options);
           }
-          const sanitized = dropThinkingBlocks(messages as unknown as AgentMessage[]) as unknown;
+          const sanitized = dropFn(messages as unknown as AgentMessage[]) as unknown;
           if (sanitized === messages) {
             return inner(model, context, options);
           }
@@ -2329,6 +2345,7 @@ export async function runEmbeddedAttempt(
         getUsageTotals,
         getCompactionCount,
       } = subscription;
+      unsubscribeFn = unsubscribe;
 
       const queueHandle: EmbeddedPiQueueHandle = {
         queueMessage: async (text: string) => {
@@ -2428,6 +2445,7 @@ export async function runEmbeddedAttempt(
           hookCtx,
           hookRunner,
           legacyBeforeAgentStartResult: params.legacyBeforeAgentStartResult,
+          systemPrompt: systemPromptText,
         });
         {
           if (hookResult?.prependContext) {
@@ -2462,6 +2480,7 @@ export async function runEmbeddedAttempt(
         log.debug(`embedded run prompt start: runId=${params.runId} sessionId=${params.sessionId}`);
         cacheTrace?.recordStage("prompt:before", {
           prompt: effectivePrompt,
+          system: systemPromptText,
           messages: activeSession.messages,
         });
 
@@ -2810,16 +2829,9 @@ export async function runEmbeddedAttempt(
             `run cleanup: runId=${params.runId} sessionId=${params.sessionId} aborted=${aborted} timedOut=${timedOut}`,
           );
         }
-        try {
-          unsubscribe();
-        } catch (err) {
-          // unsubscribe() should never throw; if it does, it indicates a serious bug.
-          // Log at error level to ensure visibility, but don't rethrow in finally block
-          // as it would mask any exception from the try block above.
-          log.error(
-            `CRITICAL: unsubscribe failed, possible resource leak: runId=${params.runId} ${String(err)}`,
-          );
-        }
+        // NOTE: unsubscribe() moved to outer finally (after flushPendingToolResultsAfterIdle)
+        // so the subscriber stays alive to process late assistant messages from
+        // pi-agent-core's async tool loop when prompt() resolves early on auto-retry.
         clearActiveEmbeddedRun(params.sessionId, queueHandle, params.sessionKey);
         params.abortSignal?.removeEventListener?.("abort", onAbort);
       }
@@ -2863,7 +2875,7 @@ export async function runEmbeddedAttempt(
           });
       }
 
-      return {
+      const result: EmbeddedRunAttemptResult = {
         aborted,
         timedOut,
         timedOutDuringCompaction,
@@ -2891,6 +2903,8 @@ export async function runEmbeddedAttempt(
         clientToolCall: clientToolCallDetected ?? undefined,
         yieldDetected: yieldDetected || undefined,
       };
+      attemptResultRef = result;
+      return result;
     } finally {
       // Always tear down the session (and release the lock) before we leave this attempt.
       //
@@ -2906,6 +2920,35 @@ export async function runEmbeddedAttempt(
         sessionManager,
         clearPendingOnTimeout: true,
       });
+
+      // Unsubscribe *after* flush so the subscriber processes any late assistant
+      // messages produced by pi-agent-core's async tool loop when prompt() resolves
+      // early (auto-retry race). Previously unsubscribe lived in the inner finally
+      // and ran before flush, causing assistantTexts/lastAssistant to be stale.
+      try {
+        unsubscribeFn?.();
+      } catch (err) {
+        log.error(
+          `CRITICAL: unsubscribe failed, possible resource leak: runId=${params.runId} ${String(err)}`,
+        );
+      }
+
+      // Re-capture snapshot if flush produced new messages that the early
+      // prompt() return missed (prompt-early-resolve race condition).
+      if (attemptResultRef && session) {
+        const postFlushMessages = session.messages.slice();
+        if (postFlushMessages.length > attemptResultRef.messagesSnapshot.length) {
+          log.info(
+            `post-flush recapture: runId=${params.runId} pre=${attemptResultRef.messagesSnapshot.length} post=${postFlushMessages.length}`,
+          );
+          attemptResultRef.messagesSnapshot = postFlushMessages;
+          attemptResultRef.lastAssistant = postFlushMessages
+            .slice()
+            .toReversed()
+            .find((m): m is AssistantMessage => m.role === "assistant");
+        }
+      }
+
       session?.dispose();
       releaseWsSession(params.sessionId);
       await sessionLock.release();
