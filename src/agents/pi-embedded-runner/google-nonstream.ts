@@ -19,7 +19,7 @@ import type {
   ToolCall,
 } from "@mariozechner/pi-ai";
 import { createAssistantMessageEventStream, calculateCost } from "@mariozechner/pi-ai";
-// pi-ai internal — no exports map, safe to import by path
+import { log } from "./logger.js";
 import {
   convertMessages,
   convertTools,
@@ -27,8 +27,7 @@ import {
   retainThoughtSignature,
   mapStopReason,
   mapToolChoice,
-} from "@mariozechner/pi-ai/dist/providers/google-shared.js";
-import { log } from "./logger.js";
+} from "./pi-ai-google-internals.js";
 
 let toolCallCounter = 0;
 

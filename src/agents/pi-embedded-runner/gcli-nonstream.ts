@@ -21,16 +21,16 @@ import type {
   ToolCall,
 } from "@mariozechner/pi-ai";
 import { createAssistantMessageEventStream, calculateCost } from "@mariozechner/pi-ai";
-import { extractRetryDelay } from "@mariozechner/pi-ai/dist/providers/google-gemini-cli.js";
+import { log } from "./logger.js";
 import {
+  extractRetryDelay,
   convertMessages,
   convertTools,
   isThinkingPart,
   retainThoughtSignature,
   mapStopReasonString,
   mapToolChoice,
-} from "@mariozechner/pi-ai/dist/providers/google-shared.js";
-import { log } from "./logger.js";
+} from "./pi-ai-google-internals.js";
 
 let toolCallCounter = 0;
 
@@ -273,7 +273,7 @@ export function wrapGcliNonStreaming(streamFn: StreamFn): StreamFn {
         const baseUrl = (model as unknown as Record<string, unknown>).baseUrl as string | undefined;
         const endpoint = baseUrl?.trim() || DEFAULT_ENDPOINT;
         const requestBody = buildCcaRequest(model, context, projectId, options);
-        (options as StreamOptions | undefined)?.onPayload?.(requestBody);
+        (options as StreamOptions | undefined)?.onPayload?.(requestBody, model);
 
         const requestHeaders: Record<string, string> = {
           Authorization: `Bearer ${accessToken}`,
