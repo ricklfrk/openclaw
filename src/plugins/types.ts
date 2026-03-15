@@ -515,6 +515,10 @@ export type PluginHookAgentContext = {
 export type PluginHookBeforeModelResolveEvent = {
   /** User prompt for this run. No session messages are available yet in this phase. */
   prompt: string;
+  /** Current provider for this run (session/default) before any hook override. Plugins may use this to remember and restore later. */
+  provider?: string;
+  /** Current model id for this run (session/default) before any hook override. */
+  modelId?: string;
 };
 
 export type PluginHookBeforeModelResolveResult = {

@@ -64,9 +64,14 @@ if (!existsSync(PROMPTS_PATH)) {
   writeFileSync(PROMPTS_PATH, JSON.stringify(DEFAULT_PROMPTS, null, 2) + "\n", "utf-8");
 }
 
-const rawPrompts: { part1: string[]; part2: string[] } = JSON.parse(
-  readFileSync(PROMPTS_PATH, "utf-8"),
-);
+type PromptsConfig = {
+  part1: string[];
+  part2: string[];
+  /** Optional: "provider/model" used when /nsfw on (e.g. Gemini 3.1). */
+  modelWhenOn?: string;
+};
+
+const rawPrompts: PromptsConfig = JSON.parse(readFileSync(PROMPTS_PATH, "utf-8"));
 
 function interpolateKeys(text: string): string {
   return text.replace(/\{\{(random_key_[1-5])\}\}/g, (_match, key: string) => randomKeys[key]);
@@ -78,12 +83,37 @@ const NSFW_SYSTEM_PROMPT_PART2 = interpolateKeys(rawPrompts.part2.join("\n"));
 // The default identity line to replace
 const IDENTITY_LINE = "You are a personal assistant running inside OpenClaw.";
 
+/** Parse "provider/model" into providerOverride and modelOverride. */
+function parseProviderModel(
+  value: string | undefined,
+): { providerOverride: string; modelOverride: string } | undefined {
+  const s = value?.trim();
+  if (!s || !s.includes("/")) {
+    return undefined;
+  }
+  const idx = s.indexOf("/");
+  const providerOverride = s.slice(0, idx).trim();
+  const modelOverride = s.slice(idx + 1).trim();
+  return providerOverride && modelOverride ? { providerOverride, modelOverride } : undefined;
+}
+
+/** Format provider/model for display (e.g. "anthropic/claude-opus-4-6" → "claude-opus-4-6"). */
+function formatModelLabel(provider: string, modelId: string): string {
+  if (!provider || !modelId) {
+    return `${provider}/${modelId}`.replace(/^\/|\/$/g, "").trim() || "—";
+  }
+  return modelId;
+}
+
 // ============================================================================
 // In-memory state (resets on restart)
 // Per-agent toggle: Set of agentIds that have NSFW enabled.
 // ============================================================================
 
 const nsfwEnabledAgents = new Set<string>();
+
+/** Per-agent model (provider + modelId) to restore when /nsfw off. Set when turning on. */
+const savedModelBeforeOn = new Map<string, { providerOverride: string; modelOverride: string }>();
 
 // ============================================================================
 // Plugin Definition
@@ -109,12 +139,32 @@ const nsfwPlugin = {
 
         if (arg === "on" || arg === "true" || arg === "1") {
           nsfwEnabledAgents.add(agent);
-          return { text: `NSFW mode ON for agent "${agent}". Will reset on restart.` };
+          const modelWhenOn = parseProviderModel(rawPrompts.modelWhenOn);
+          const toLabel = modelWhenOn
+            ? formatModelLabel(modelWhenOn.providerOverride, modelWhenOn.modelOverride)
+            : "—";
+          const saved = savedModelBeforeOn.get(agent);
+          const fromLabel = saved
+            ? formatModelLabel(saved.providerOverride, saved.modelOverride)
+            : null;
+          const msg = fromLabel
+            ? `NSFW mode ON for agent "${agent}". Model: ${fromLabel} → ${toLabel}. Will reset on restart.`
+            : `NSFW mode ON for agent "${agent}". Model: ${toLabel}. (Previous model will be restored when you turn off.) Will reset on restart.`;
+          return { text: msg };
         }
 
         if (arg === "off" || arg === "false" || arg === "0") {
+          const saved = savedModelBeforeOn.get(agent);
+          const restoredLabel = saved
+            ? formatModelLabel(saved.providerOverride, saved.modelOverride)
+            : "—";
           nsfwEnabledAgents.delete(agent);
-          return { text: `NSFW mode OFF for agent "${agent}".` };
+          savedModelBeforeOn.delete(agent);
+          const msg =
+            restoredLabel !== "—"
+              ? `NSFW mode OFF for agent "${agent}". Model restored to ${restoredLabel}.`
+              : `NSFW mode OFF for agent "${agent}".`;
+          return { text: msg };
         }
 
         // No arg or unrecognized → show status
@@ -125,6 +175,22 @@ const nsfwPlugin = {
           text: `NSFW mode is currently ${isOn ? "ON" : "OFF"} for agent "${agent}".${list} Usage: /nsfw on | /nsfw off`,
         };
       },
+    });
+
+    // Switch model by /nsfw on|off: on → use modelWhenOn (and remember current model for later restore); off → restore saved.
+    api.on("before_model_resolve", (event, ctx) => {
+      const agent = ctx?.agentId ?? "main";
+      const modelWhenOn = parseProviderModel(rawPrompts.modelWhenOn);
+      if (nsfwEnabledAgents.has(agent)) {
+        if (event.provider && event.modelId) {
+          savedModelBeforeOn.set(agent, {
+            providerOverride: event.provider,
+            modelOverride: event.modelId,
+          });
+        }
+        return modelWhenOn ?? undefined;
+      }
+      return undefined;
     });
 
     // Inject prompt fragments when enabled for this agent
