@@ -112,8 +112,11 @@ function formatModelLabel(provider: string, modelId: string): string {
 
 const nsfwEnabledAgents = new Set<string>();
 
-/** Per-agent model (provider + modelId) to restore when /nsfw off. Set when turning on. */
+/** Per-agent model (provider + modelId) to restore when /nsfw off. Captured by hook on first run after turning on. */
 const savedModelBeforeOn = new Map<string, { providerOverride: string; modelOverride: string }>();
+
+/** Tracks the pre-hook model seen on every agent run so the command handler can show "from → to". */
+const lastSeenModel = new Map<string, { provider: string; modelId: string }>();
 
 // ============================================================================
 // Plugin Definition
@@ -143,26 +146,28 @@ const nsfwPlugin = {
           const toLabel = modelWhenOn
             ? formatModelLabel(modelWhenOn.providerOverride, modelWhenOn.modelOverride)
             : "—";
-          const saved = savedModelBeforeOn.get(agent);
-          const fromLabel = saved
-            ? formatModelLabel(saved.providerOverride, saved.modelOverride)
-            : null;
+          const seen = lastSeenModel.get(agent);
+          const fromLabel = seen ? formatModelLabel(seen.provider, seen.modelId) : null;
           const msg = fromLabel
-            ? `NSFW mode ON for agent "${agent}". Model: ${fromLabel} → ${toLabel}. Will reset on restart.`
-            : `NSFW mode ON for agent "${agent}". Model: ${toLabel}. (Previous model will be restored when you turn off.) Will reset on restart.`;
+            ? `NSFW mode ON for agent "${agent}". Model: ${fromLabel} → ${toLabel}`
+            : `NSFW mode ON for agent "${agent}". Model → ${toLabel}`;
           return { text: msg };
         }
 
         if (arg === "off" || arg === "false" || arg === "0") {
+          const modelWhenOn = parseProviderModel(rawPrompts.modelWhenOn);
+          const fromLabel = modelWhenOn
+            ? formatModelLabel(modelWhenOn.providerOverride, modelWhenOn.modelOverride)
+            : null;
           const saved = savedModelBeforeOn.get(agent);
-          const restoredLabel = saved
+          const toLabel = saved
             ? formatModelLabel(saved.providerOverride, saved.modelOverride)
-            : "—";
+            : null;
           nsfwEnabledAgents.delete(agent);
           savedModelBeforeOn.delete(agent);
           const msg =
-            restoredLabel !== "—"
-              ? `NSFW mode OFF for agent "${agent}". Model restored to ${restoredLabel}.`
+            fromLabel && toLabel
+              ? `NSFW mode OFF for agent "${agent}". Model: ${fromLabel} → ${toLabel}`
               : `NSFW mode OFF for agent "${agent}".`;
           return { text: msg };
         }
@@ -177,9 +182,11 @@ const nsfwPlugin = {
       },
     });
 
-    // Switch model by /nsfw on|off: on → use modelWhenOn (and remember current model for later restore); off → restore saved.
     api.on("before_model_resolve", (event, ctx) => {
       const agent = ctx?.agentId ?? "main";
+      if (event.provider && event.modelId) {
+        lastSeenModel.set(agent, { provider: event.provider, modelId: event.modelId });
+      }
       const modelWhenOn = parseProviderModel(rawPrompts.modelWhenOn);
       if (nsfwEnabledAgents.has(agent)) {
         if (event.provider && event.modelId) {
