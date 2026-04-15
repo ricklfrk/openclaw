@@ -270,16 +270,21 @@ export function buildEmbeddedRunPayloads(params: {
     }
     return isRawApiErrorPayload(trimmed);
   };
-  const answerTexts = suppressAssistantArtifacts
-    ? []
-    : (params.assistantTexts.length
-        ? params.assistantTexts
-        : fallbackAnswerText
-          ? [fallbackAnswerText]
-          : []
-      ).filter((text) => !shouldSuppressRawErrorText(text));
+  // When the agent already delivered its reply via a messaging tool, suppress
+  // all accumulated assistantTexts — they are intermediate reasoning between
+  // tool calls, not user-facing replies. The real reply was sent explicitly.
+  const suppressForMessagingTool = params.didSendViaMessagingTool === true;
+  const answerTexts =
+    suppressAssistantArtifacts || suppressForMessagingTool
+      ? []
+      : (params.assistantTexts.length
+          ? params.assistantTexts
+          : fallbackAnswerText
+            ? [fallbackAnswerText]
+            : []
+        ).filter((text) => !shouldSuppressRawErrorText(text));
 
-  let hasUserFacingAssistantReply = false;
+  let hasUserFacingAssistantReply = suppressForMessagingTool;
   for (const text of answerTexts) {
     const {
       text: cleanedText,

@@ -28,6 +28,8 @@ minimumReleaseAgeExclude:
   - "rolldown"
   - "sqlite-vec"
   - "sqlite-vec-*"
+  - "discord-api-types"
+  - "@types/node"
 
 onlyBuiltDependencies:
   - "@lydell/node-pty"

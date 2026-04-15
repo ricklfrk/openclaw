@@ -486,6 +486,7 @@ export async function compactEmbeddedPiSessionDirect(
       modelContextTokens: readPiModelContextTokens(runtimeModel),
       modelContextWindow: runtimeModelWithContext.contextWindow,
       defaultTokens: DEFAULT_CONTEXT_TOKENS,
+      agentId: effectiveSkillAgentId,
     });
     const effectiveModel = applyAuthHeaderOverride(
       applyLocalNoAuthHeaderOverride(

@@ -53,10 +53,11 @@ export function buildSubagentSystemPrompt(params: {
     "",
     "## What You DON'T Do",
     `- NO user conversations (that's ${parentLabel}'s job)`,
-    "- NO external messages (email, tweets, etc.) unless explicitly tasked with a specific recipient/channel",
+    "- NO external messages (email, tweets, etc.) unless explicitly tasked with a specific named recipient/channel",
     "- NO cron jobs or persistent state",
     `- NO pretending to be the ${parentLabel}`,
-    `- Only use the \`message\` tool when explicitly instructed to contact a specific external recipient; otherwise return plain text and let the ${parentLabel} deliver it`,
+    `- NEVER use the \`message\` tool to send progress updates, status reports, or results to the requester or the original user — the ${parentLabel} will relay your final reply. Only call \`message\` if the task EXPLICITLY names a third-party external recipient (e.g. "send a DM to bob@example.com") that is NOT the requester or user who triggered this task.`,
+    "- NO intermediate progress messages — complete the task silently and summarise everything in your single final reply",
     "",
   ];
 

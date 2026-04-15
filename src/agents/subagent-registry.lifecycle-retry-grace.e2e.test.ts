@@ -162,18 +162,6 @@ describe("subagent registry lifecycle error grace", () => {
     subagentAnnounceTesting.setDepsForTest({
       callGateway: callGatewayMock as typeof import("../gateway/call.js").callGateway,
       loadConfig: loadConfigMock as typeof import("../config/config.js").loadConfig,
-      loadSubagentRegistryRuntime: async () => ({
-        countActiveDescendantRuns: mod.countActiveDescendantRuns,
-        countPendingDescendantRuns: mod.countPendingDescendantRuns,
-        countPendingDescendantRunsExcludingRun: mod.countPendingDescendantRunsExcludingRun,
-        getLatestSubagentRunByChildSessionKey: mod.getLatestSubagentRunByChildSessionKey,
-        isSubagentSessionRunActive: mod.isSubagentSessionRunActive,
-        listSubagentRunsForRequester: mod.listSubagentRunsForRequester,
-        replaceSubagentRunAfterSteer: mod.replaceSubagentRunAfterSteer,
-        resolveRequesterForChildSession: mod.resolveRequesterForChildSession,
-        shouldIgnorePostCompletionAnnounceForSession:
-          mod.shouldIgnorePostCompletionAnnounceForSession,
-      }),
     });
     subagentAnnounceDeliveryTesting.setDepsForTest({
       callGateway: callGatewayMock as typeof import("../gateway/call.js").callGateway,

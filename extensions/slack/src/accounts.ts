@@ -115,8 +115,9 @@ export function resolveSlackReplyToMode(
   chatType?: string | null,
 ): "off" | "first" | "all" | "batched" {
   const normalized = normalizeChatType(chatType ?? undefined);
-  if (normalized && account.replyToModeByChatType?.[normalized] !== undefined) {
-    return account.replyToModeByChatType[normalized] ?? "off";
+  const modeKey = normalized as "direct" | "group" | "channel" | undefined;
+  if (modeKey && account.replyToModeByChatType?.[modeKey] !== undefined) {
+    return account.replyToModeByChatType[modeKey] ?? "off";
   }
   if (normalized === "direct" && account.dm?.replyToMode !== undefined) {
     return account.dm.replyToMode;

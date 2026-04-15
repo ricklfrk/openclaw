@@ -31,6 +31,7 @@ const FAILURE_REASON_PRIORITY: AuthProfileFailureReason[] = [
   "model_not_found",
   "overloaded",
   "timeout",
+  "empty_response",
   "rate_limit",
   "unknown",
 ];
@@ -516,6 +517,47 @@ export async function markAuthProfileUsed(params: {
   authProfileUsageDeps.saveAuthProfileStore(store, agentDir);
 }
 
+/**
+ * Lightweight lastUsed stamp for round-robin profile selection.
+ * Unlike markAuthProfileUsed, this does NOT reset errorCount/cooldown —
+ * it only advances the round-robin cursor so the next request picks a
+ * different profile.
+ */
+export async function stampProfileLastUsed(params: {
+  store: AuthProfileStore;
+  profileId: string;
+  agentDir?: string;
+}): Promise<void> {
+  const { store, profileId, agentDir } = params;
+  const updated = await updateAuthProfileStoreWithLock({
+    agentDir,
+    updater: (freshStore) => {
+      if (!freshStore.profiles[profileId]) {
+        return false;
+      }
+      freshStore.usageStats = freshStore.usageStats ?? {};
+      freshStore.usageStats[profileId] = {
+        ...freshStore.usageStats[profileId],
+        lastUsed: Date.now(),
+      };
+      return true;
+    },
+  });
+  if (updated) {
+    store.usageStats = updated.usageStats;
+    return;
+  }
+  if (!store.profiles[profileId]) {
+    return;
+  }
+  store.usageStats = store.usageStats ?? {};
+  store.usageStats[profileId] = {
+    ...store.usageStats[profileId],
+    lastUsed: Date.now(),
+  };
+  saveAuthProfileStore(store, agentDir);
+}
+
 export function calculateAuthProfileCooldownMs(errorCount: number): number {
   const normalized = Math.max(1, errorCount);
   if (normalized <= 1) {
@@ -725,6 +767,9 @@ function computeNextProfileUsageStats(params: {
     errorCount: nextErrorCount,
     failureCounts,
     lastFailureAt: params.now,
+    // Advance lastUsed so round-robin treats this profile as "just used" when it
+    // exits cooldown; otherwise it would be picked first again (oldest lastUsed).
+    lastUsed: params.now,
   };
 
   const disabledFailureReason =

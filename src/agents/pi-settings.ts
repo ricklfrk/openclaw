@@ -1,17 +1,26 @@
+import type { AgentRetryConfig } from "../config/types.agent-defaults.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { ContextEngineInfo } from "../context-engine/types.js";
 import { MIN_PROMPT_BUDGET_RATIO, MIN_PROMPT_BUDGET_TOKENS } from "./pi-compaction-constants.js";
 
 export const DEFAULT_PI_COMPACTION_RESERVE_TOKENS_FLOOR = 20_000;
 
+export type PiRetryOverrides = {
+  enabled?: boolean;
+  maxRetries?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+};
+
 type PiSettingsManagerLike = {
   getCompactionReserveTokens: () => number;
   getCompactionKeepRecentTokens: () => number;
   applyOverrides: (overrides: {
-    compaction: {
+    compaction?: {
       reserveTokens?: number;
       keepRecentTokens?: number;
     };
+    retry?: PiRetryOverrides;
   }) => void;
   setCompactionEnabled?: (enabled: boolean) => void;
 };
@@ -62,18 +71,28 @@ function toPositiveInt(value: unknown): number | undefined {
   return Math.floor(value);
 }
 
+function findAgentEntry(cfg: OpenClawConfig | undefined, agentId: string | undefined) {
+  if (!agentId || !cfg?.agents?.list) {
+    return undefined;
+  }
+  return cfg.agents.list.find((a) => a.id === agentId);
+}
+
 export function applyPiCompactionSettingsFromConfig(params: {
   settingsManager: PiSettingsManagerLike;
   cfg?: OpenClawConfig;
   /** When known, the resolved context window budget for the current model. */
   contextTokenBudget?: number;
+  agentId?: string;
 }): {
   didOverride: boolean;
   compaction: { reserveTokens: number; keepRecentTokens: number };
 } {
   const currentReserveTokens = params.settingsManager.getCompactionReserveTokens();
   const currentKeepRecentTokens = params.settingsManager.getCompactionKeepRecentTokens();
-  const compactionCfg = params.cfg?.agents?.defaults?.compaction;
+  const defaultsCfg = params.cfg?.agents?.defaults?.compaction;
+  const perAgentCfg = findAgentEntry(params.cfg, params.agentId)?.compaction;
+  const compactionCfg = perAgentCfg ? { ...defaultsCfg, ...perAgentCfg } : defaultsCfg;
 
   const configuredReserveTokens = toNonNegativeInt(compactionCfg?.reserveTokens);
   const configuredKeepRecentTokens = toPositiveInt(compactionCfg?.keepRecentTokens);
@@ -120,6 +139,51 @@ export function applyPiCompactionSettingsFromConfig(params: {
       keepRecentTokens: targetKeepRecentTokens,
     },
   };
+}
+
+/** Merge defaults.retry with per-agent retry overrides. */
+export function resolveAgentRetryConfig(
+  cfg: OpenClawConfig | undefined,
+  agentId: string | undefined,
+): AgentRetryConfig | undefined {
+  const defaults = cfg?.agents?.defaults?.retry;
+  const perAgent = findAgentEntry(cfg, agentId)?.retry;
+  if (!defaults && !perAgent) {
+    return undefined;
+  }
+  return { ...defaults, ...perAgent };
+}
+
+/** Apply resolved retry config to the Pi settings manager. */
+export function applyPiRetrySettingsFromConfig(params: {
+  settingsManager: PiSettingsManagerLike;
+  cfg?: OpenClawConfig;
+  agentId?: string;
+}): { didOverride: boolean } {
+  const retry = resolveAgentRetryConfig(params.cfg, params.agentId);
+  if (!retry) {
+    return { didOverride: false };
+  }
+
+  const overrides: PiRetryOverrides = {};
+  if (retry.enabled !== undefined) {
+    overrides.enabled = retry.enabled;
+  }
+  if (retry.maxRetries !== undefined) {
+    overrides.maxRetries = retry.maxRetries;
+  }
+  if (retry.baseDelayMs !== undefined) {
+    overrides.baseDelayMs = retry.baseDelayMs;
+  }
+  if (retry.maxDelayMs !== undefined) {
+    overrides.maxDelayMs = retry.maxDelayMs;
+  }
+
+  if (Object.keys(overrides).length === 0) {
+    return { didOverride: false };
+  }
+  params.settingsManager.applyOverrides({ retry: overrides });
+  return { didOverride: true };
 }
 
 /** Decide whether Pi's internal auto-compaction should be disabled for this run. */

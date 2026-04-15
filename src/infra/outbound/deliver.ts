@@ -847,7 +847,8 @@ async function deliverOutboundPayloadsCore(
     try {
       throwIfAborted(abortSignal);
 
-      // Run message_sending plugin hook (may modify content or cancel)
+      // Run message_sending plugin hook BEFORE plain-text sanitization so
+      // plugins see the original tags (e.g. <disclaimer>...</disclaimer>).
       const hookResult = await applyMessageSendingHook({
         hookRunner,
         enabled: hasMessageSendingHooks,

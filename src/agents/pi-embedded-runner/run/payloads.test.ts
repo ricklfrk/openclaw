@@ -199,4 +199,30 @@ describe("buildEmbeddedRunPayloads tool-error warnings", () => {
       assistantTexts: ['{"action":"NO_REPLY"}'],
     });
   });
+
+  it("suppresses intermediate assistant texts when messaging tool already sent the reply", () => {
+    const payloads = buildPayloads({
+      assistantTexts: [
+        "Now I see the problem! The function hardcodes rescueMode: false.",
+        '"Create & Link Inbox" works! But Rescue is off.',
+        "Let me test Link / Rescue Email:",
+      ],
+      didSendViaMessagingTool: true,
+    });
+
+    expect(payloads).toHaveLength(0);
+  });
+
+  it("still shows tool error warnings when messaging tool sent but tool failed critically", () => {
+    const payloads = buildPayloads({
+      assistantTexts: ["intermediate reasoning text"],
+      didSendViaMessagingTool: true,
+      lastToolError: { toolName: "write", error: "permission denied", mutatingAction: true },
+      verboseLevel: "off",
+    });
+
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]?.isError).toBe(true);
+    expect(payloads[0]?.text).toContain("Write");
+  });
 });

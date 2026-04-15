@@ -2,6 +2,7 @@ import type { RequestClient } from "@buape/carbon";
 import { resolveAgentAvatar } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
 import type { MarkdownTableMode, ReplyToMode } from "openclaw/plugin-sdk/config-runtime";
+import { getGlobalHookRunner } from "openclaw/plugin-sdk/plugin-runtime";
 import type { ChunkMode } from "openclaw/plugin-sdk/reply-chunking";
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-dispatch-runtime";
 import {
@@ -402,8 +403,31 @@ export async function deliverDiscordReply(params: {
   const request: RetryRunner | undefined = channelId
     ? createDiscordRetryRunner({ configRetry: account.config.retry })
     : undefined;
+  const hookRunner = getGlobalHookRunner();
   let deliveredAny = false;
-  for (const payload of params.replies) {
+  for (const rawPayload of params.replies) {
+    let payload = rawPayload;
+    if (hookRunner?.hasHooks("message_sending")) {
+      try {
+        const hookResult = await hookRunner.runMessageSending(
+          {
+            to: params.target,
+            content: payload.text ?? "",
+            metadata: { channel: "discord", accountId: params.accountId },
+          },
+          { channelId: "discord", accountId: params.accountId ?? undefined },
+        );
+        if (hookResult?.cancel) {
+          continue;
+        }
+        if (hookResult?.content != null) {
+          payload = { ...payload, text: hookResult.content };
+        }
+      } catch {
+        // Don't block delivery on hook failure
+      }
+    }
+
     const resolvePayloadReplyTo = createPayloadReplyToResolver({
       payload,
       replyToMode,

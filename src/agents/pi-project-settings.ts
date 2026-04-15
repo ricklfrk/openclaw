@@ -5,7 +5,10 @@ import {
   loadEnabledBundlePiSettingsSnapshot,
   resolveEmbeddedPiProjectSettingsPolicy,
 } from "./pi-project-settings-snapshot.js";
-import { applyPiCompactionSettingsFromConfig } from "./pi-settings.js";
+import {
+  applyPiCompactionSettingsFromConfig,
+  applyPiRetrySettingsFromConfig,
+} from "./pi-settings.js";
 
 export {
   buildEmbeddedPiSettingsSnapshot,
@@ -43,12 +46,19 @@ export function createPreparedEmbeddedPiSettingsManager(params: {
   cfg?: OpenClawConfig;
   /** Resolved context window budget so reserve-token floor can be capped for small models. */
   contextTokenBudget?: number;
+  agentId?: string;
 }): SettingsManager {
   const settingsManager = createEmbeddedPiSettingsManager(params);
   applyPiCompactionSettingsFromConfig({
     settingsManager,
     cfg: params.cfg,
     contextTokenBudget: params.contextTokenBudget,
+    agentId: params.agentId,
+  });
+  applyPiRetrySettingsFromConfig({
+    settingsManager,
+    cfg: params.cfg,
+    agentId: params.agentId,
   });
   return settingsManager;
 }

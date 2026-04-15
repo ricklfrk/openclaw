@@ -934,10 +934,13 @@ export function createAgentEventHandler({
       if (toolPhase === "start" && isControlUiVisible && sessionKey && !isAborted) {
         flushBufferedChatDeltaIfNeeded(sessionKey, clientRunId, evt.runId, evt.seq);
       }
-      // Always broadcast tool events to registered WS recipients with
-      // tool-events capability, regardless of verboseLevel. The verbose
-      // setting only controls whether tool details are sent as channel
-      // messages to messaging surfaces (Telegram, Discord, etc.).
+      // Broadcast tool events to ALL WS clients so operator UIs (Mac app)
+      // always see them. The verbose setting controls messaging-channel
+      // delivery (Signal, WhatsApp via onToolResult), not local UI display.
+      broadcast("agent", toolPayload);
+      // Also send to registered tool-events recipients (web chat clients
+      // that declared the capability). Recipients that already got the
+      // broadcast will dedup by seq.
       const recipients = toolEventRecipients.get(evt.runId);
       if (recipients && recipients.size > 0) {
         broadcastToConnIds(
@@ -971,15 +974,14 @@ export function createAgentEventHandler({
     }
 
     if (isControlUiVisible && sessionKey) {
-      // Send tool events to node/channel subscribers only when verbose is enabled;
-      // WS clients already received the event above via broadcastToConnIds.
-      if (!isToolEvent || toolVerbose !== "off") {
-        nodeSendToSession(
-          sessionKey,
-          "agent",
-          isToolEvent ? { ...toolPayload, ...buildSessionEventSnapshot(sessionKey) } : agentPayload,
-        );
-      }
+      // Always send events (including tool events) to node subscribers (Mac app,
+      // control UI). The verbose setting controls messaging-channel delivery
+      // (Signal, WhatsApp via onToolResult), not local UI display.
+      nodeSendToSession(
+        sessionKey,
+        "agent",
+        isToolEvent ? { ...toolPayload, ...buildSessionEventSnapshot(sessionKey) } : agentPayload,
+      );
       if (!isAborted && evt.stream === "assistant" && typeof evt.data?.text === "string") {
         emitChatDelta(sessionKey, clientRunId, evt.runId, evt.seq, evt.data.text, evt.data.delta);
       }

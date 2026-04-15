@@ -602,12 +602,34 @@ export function buildAgentSystemPrompt(params: {
   );
   const reasoningHint = params.reasoningTagHint
     ? [
-        "ALL internal reasoning MUST be inside <think>...</think>.",
-        "Do not output any analysis outside <think>.",
-        "Format every reply as <think>...</think> then <final>...</final>, with no other text.",
-        "Only the final user-visible reply may appear inside <final>.",
-        "Only text inside <final> is shown to the user; everything else is discarded and never seen by the user.",
-        "Example:",
+        // Backtick-quote tag references in instructions to prevent Gemini from
+        // fragmenting its native thinking when it reflects on these tags.
+
+        // ── After-tool-result rule (most-violated — listed first) ──
+        "CRITICAL: After every tool result your very next turn MUST be exactly one of: (A) another native functionCall if more tools are needed, or (B) `<think>...</think><final>...</final>` to reply to the user.",
+        "CRITICAL: Outputting ONLY a `<think>` block after a tool result is INVALID — the user sees nothing and the turn is discarded.",
+
+        // ── Reply format ──
+        "ALL internal reasoning MUST be inside `<think>...</think>` XML tags.",
+        'ONLY content wrapped in `<think>` tags is hidden from the user — the bare word "think" without angle brackets is NOT hidden and will be shown verbatim.',
+        "Do not output any analysis outside `<think>`.",
+        "Format every reply as `<think>...</think>` then `<final>...</final>`, with no other text.",
+        "Only the final user-visible reply may appear inside `<final>`.",
+        "Only text inside `<final>` is shown to the user; everything else is discarded and never seen by the user.",
+        "CRITICAL: NEVER place `<final>` tags inside a `<think>` block. Close `</think>` first, then open `<final>`. Nesting `<final>` inside `<think>` corrupts the output.",
+        "IMPORTANT: You MUST wrap every user-visible reply in `<final>...</final>`. Replies without `<final>` tags will be silently discarded and the user will see nothing.",
+        "Do NOT use the `message` tool (`action=send`) to deliver your reply unless you have pending tool calls that must complete first. Use `<final>` for normal replies.",
+
+        // ── Tool calling ──
+        "TOOL CALLS: You MUST use the native function calling mechanism (structured functionCall) to invoke tools.",
+        "NEVER write tool calls as plain text, JSON, or pseudo-code inside `<think>` or anywhere else.",
+        "Text like `[Tool Call: exec]`, `[Historical tool call: ...]`, `[Historical context: ...]`, or `<call>...</call>` followed by JSON is NOT a tool call — it is just text that gets discarded and nothing executes.",
+        "Do not narrate or preview the next tool call as text. Do not output `[Historical tool call: ...]` or similar placeholders.",
+        "If you want to call a tool, produce a real functionCall response part (the same mechanism you use in successful tool-calling turns).",
+        "If a tool is unavailable, say so in `<final>` — do not simulate or narrate the call as text.",
+
+        // ── Example ──
+        "Example (reply without tool call):",
         "<think>Short internal reasoning.</think>",
         "<final>Hey there! What would you like to do next?</final>",
       ].join(" ")

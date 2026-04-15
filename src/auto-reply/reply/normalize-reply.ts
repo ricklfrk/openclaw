@@ -1,4 +1,5 @@
 import { sanitizeUserFacingText } from "../../agents/pi-embedded-helpers/sanitize-user-facing-text.js";
+import { isSuppressedControlReplyText } from "../../gateway/control-reply-text.js";
 import { hasReplyPayloadContent } from "../../interactive/payload.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import { stripHeartbeatToken } from "../heartbeat.js";
@@ -17,7 +18,7 @@ import {
   type ResponsePrefixContext,
 } from "./response-prefix-template.js";
 
-export type NormalizeReplySkipReason = "empty" | "silent" | "heartbeat";
+export type NormalizeReplySkipReason = "empty" | "silent" | "heartbeat" | "control-token";
 
 export type NormalizeReplyOptions = {
   responsePrefix?: string;
@@ -93,6 +94,13 @@ export function normalizeReplyPayload(
       return null;
     }
     text = stripped.text;
+  }
+
+  // Suppress ANNOUNCE_SKIP / REPLY_SKIP control tokens that the gateway
+  // already handles but could leak through the general outbound path.
+  if (text && isSuppressedControlReplyText(text)) {
+    opts.onSkip?.("control-token");
+    return null;
   }
 
   if (text) {

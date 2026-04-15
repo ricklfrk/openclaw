@@ -2039,9 +2039,8 @@ describe("applyExtraParamsToAgent", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.headers).toEqual({
       "X-Custom": "1",
-      // Includes pi-ai default betas (preserved to avoid overwrite) + context1m
       "anthropic-beta":
-        "fine-grained-tool-streaming-2025-05-14,interleaved-thinking-2025-05-14,context-1m-2025-08-07",
+        "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14,interleaved-thinking-2025-05-14,context-1m-2025-08-07",
     });
   });
 
@@ -2058,7 +2057,7 @@ describe("applyExtraParamsToAgent", () => {
     expect(headers).toEqual({ "X-Custom": "1" });
   });
 
-  it("skips context1m beta for OAuth tokens but preserves OAuth-required betas", () => {
+  it("includes context1m beta for OAuth tokens alongside OAuth-required betas", () => {
     const calls: Array<SimpleStreamOptions | undefined> = [];
     const baseStreamFn: StreamFn = (_model, _context, options) => {
       calls.push(options);
@@ -2088,7 +2087,6 @@ describe("applyExtraParamsToAgent", () => {
     } as Model<"anthropic-messages">;
     const context: Context = { messages: [] };
 
-    // Simulate pi-agent-core passing an OAuth token (sk-ant-oat-*) as apiKey
     void agent.streamFn?.(model, context, {
       apiKey: "sk-ant-oat01-test-oauth-token", // pragma: allowlist secret
       headers: { "X-Custom": "1" },
@@ -2096,10 +2094,9 @@ describe("applyExtraParamsToAgent", () => {
 
     expect(calls).toHaveLength(1);
     const betaHeader = calls[0]?.headers?.["anthropic-beta"] as string;
-    // Must include the OAuth-required betas so they aren't stripped by pi-ai's mergeHeaders
     expect(betaHeader).toContain("oauth-2025-04-20");
     expect(betaHeader).toContain("claude-code-20250219");
-    expect(betaHeader).not.toContain("context-1m-2025-08-07");
+    expect(betaHeader).toContain("context-1m-2025-08-07");
   });
 
   it("merges existing anthropic-beta headers with configured betas", () => {
@@ -2118,7 +2115,7 @@ describe("applyExtraParamsToAgent", () => {
 
     expect(headers).toEqual({
       "anthropic-beta":
-        "prompt-caching-2024-07-31,fine-grained-tool-streaming-2025-05-14,interleaved-thinking-2025-05-14,files-api-2025-04-14,context-1m-2025-08-07",
+        "prompt-caching-2024-07-31,claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14,interleaved-thinking-2025-05-14,files-api-2025-04-14,context-1m-2025-08-07",
     });
   });
 

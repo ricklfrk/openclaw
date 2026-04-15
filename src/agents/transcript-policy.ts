@@ -23,6 +23,8 @@ export type TranscriptPolicy = {
   };
   sanitizeThinkingSignatures: boolean;
   dropThinkingBlocks: boolean;
+  /** "all" = drop from every message; "historical" = keep current tool loop (after last user msg) */
+  dropThinkingBlocksMode: "all" | "historical" | "off";
   applyGoogleTurnOrdering: boolean;
   validateGeminiTurns: boolean;
   validateAnthropicTurns: boolean;
@@ -54,6 +56,7 @@ const DEFAULT_TRANSCRIPT_POLICY: TranscriptPolicy = {
   sanitizeThoughtSignatures: undefined,
   sanitizeThinkingSignatures: false,
   dropThinkingBlocks: false,
+  dropThinkingBlocksMode: "off",
   applyGoogleTurnOrdering: false,
   validateGeminiTurns: false,
   validateAnthropicTurns: false,

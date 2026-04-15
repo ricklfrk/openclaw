@@ -1,4 +1,4 @@
-import type { AssistantMessage } from "@mariozechner/pi-ai";
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { describe, expect, it, vi } from "vitest";
 import {
   createStubSessionHarness,
@@ -7,6 +7,8 @@ import {
   extractAgentEventPayloads,
 } from "./pi-embedded-subscribe.e2e-harness.js";
 import { subscribeEmbeddedPiSession } from "./pi-embedded-subscribe.js";
+
+type AssistantMessage = Extract<AgentMessage, { role: "assistant" }>;
 
 describe("subscribeEmbeddedPiSession", () => {
   it("filters to <final> and suppresses output without a start tag", () => {

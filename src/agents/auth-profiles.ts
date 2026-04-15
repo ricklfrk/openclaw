@@ -58,4 +58,5 @@ export {
   markAuthProfileUsed,
   resolveProfilesUnavailableReason,
   resolveProfileUnusableUntilForDisplay,
+  stampProfileLastUsed,
 } from "./auth-profiles/usage.js";

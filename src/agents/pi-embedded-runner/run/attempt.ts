@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage, StreamFn } from "@mariozechner/pi-agent-core";
+import type { AssistantMessage } from "@mariozechner/pi-ai";
+import { streamSimple } from "@mariozechner/pi-ai";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -62,6 +64,7 @@ import {
   resolveChannelMessageToolHints,
   resolveChannelReactionGuidance,
 } from "../../channel-tools.js";
+import { promoteHistoricalToolCallThinkingToBlocks } from "../../custom-context-to-blocks.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../defaults.js";
 import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
@@ -129,12 +132,15 @@ import {
 import { normalizeUsage, type NormalizedUsage } from "../../usage.js";
 import { DEFAULT_BOOTSTRAP_FILENAME } from "../../workspace.js";
 import { isRunnerAbortError } from "../abort.js";
+import { wrapStreamFnWithBuffer } from "../buffered-stream.js";
 import { isCacheTtlEligibleProvider, readLastCacheTtlTimestamp } from "../cache-ttl.js";
 import { resolveCompactionTimeoutMs } from "../compaction-safety-timeout.js";
 import { runContextEngineMaintenance } from "../context-engine-maintenance.js";
 import { applyFinalEffectiveToolPolicy } from "../effective-tool-policy.js";
 import { buildEmbeddedExtensionFactories } from "../extensions.js";
 import { applyExtraParamsToAgent, resolveAgentTransportOverride } from "../extra-params.js";
+import { wrapGcliNonStreaming } from "../gcli-nonstream.js";
+import { wrapGoogleNonStreaming } from "../google-nonstream.js";
 import { prepareGooglePromptCacheStreamFn } from "../google-prompt-cache.js";
 import { getDmHistoryLimitFromSessionKey, limitHistoryTurns } from "../history.js";
 import { log } from "../logger.js";
@@ -162,6 +168,7 @@ import { buildEmbeddedSandboxInfo } from "../sandbox-info.js";
 import { prewarmSessionFile, trackSessionManagerAccess } from "../session-manager-cache.js";
 import { prepareSessionManagerForRun } from "../session-manager-init.js";
 import { resolveEmbeddedRunSkillEntries } from "../skills-runtime.js";
+import { wrapStreamFnWithKeyRotation } from "../stream-key-rotation.js";
 import {
   describeEmbeddedAgentStreamStrategy,
   resetEmbeddedAgentBaseStreamFnCacheForTest,
@@ -308,6 +315,7 @@ export {
   resetEmbeddedAgentBaseStreamFnCacheForTest,
   resolveEmbeddedAgentBaseStreamFn,
   resolveEmbeddedAgentStreamFn,
+  wrapStreamFnPromoteHistoricalToolCallThinking,
 };
 
 const MAX_BTW_SNAPSHOT_MESSAGES = 100;
@@ -357,6 +365,73 @@ export function remapInjectedContextFilesToWorkspace(params: {
         }
       : file;
   });
+}
+
+function promoteHistoricalToolCallThinkingInMessage(message: unknown): void {
+  if (!message || typeof message !== "object") {
+    return;
+  }
+  const assistantMessage = message as AssistantMessage;
+  if (assistantMessage.role !== "assistant" || !Array.isArray(assistantMessage.content)) {
+    return;
+  }
+  promoteHistoricalToolCallThinkingToBlocks(assistantMessage);
+  if (
+    (assistantMessage as { stopReason?: unknown }).stopReason === "tool_call" &&
+    assistantMessage.content.some(
+      (block: { type?: string } | undefined) => block?.type === "toolCall",
+    )
+  ) {
+    (assistantMessage as { stopReason?: string }).stopReason = "toolUse";
+  }
+}
+
+function wrapStreamPromoteHistoricalToolCallThinking(
+  stream: ReturnType<typeof streamSimple>,
+): ReturnType<typeof streamSimple> {
+  const originalResult = stream.result.bind(stream);
+  stream.result = async () => {
+    const message = await originalResult();
+    promoteHistoricalToolCallThinkingInMessage(message);
+    return message;
+  };
+
+  const originalAsyncIterator = stream[Symbol.asyncIterator].bind(stream);
+  (stream as { [Symbol.asyncIterator]: typeof originalAsyncIterator })[Symbol.asyncIterator] =
+    function () {
+      const iterator = originalAsyncIterator();
+      return {
+        async next() {
+          const result = await iterator.next();
+          if (!result.done && result.value && typeof result.value === "object") {
+            const event = result.value as { partial?: unknown; message?: unknown };
+            promoteHistoricalToolCallThinkingInMessage(event.partial);
+            promoteHistoricalToolCallThinkingInMessage(event.message);
+          }
+          return result;
+        },
+        async return(value?: unknown) {
+          return iterator.return?.(value) ?? { done: true as const, value: undefined };
+        },
+        async throw(error?: unknown) {
+          return iterator.throw?.(error) ?? { done: true as const, value: undefined };
+        },
+      };
+    };
+
+  return stream;
+}
+
+function wrapStreamFnPromoteHistoricalToolCallThinking(baseFn: StreamFn): StreamFn {
+  return (model, context, options) => {
+    const maybeStream = baseFn(model, context, options);
+    if (maybeStream && typeof maybeStream === "object" && "then" in maybeStream) {
+      return Promise.resolve(maybeStream).then((stream) =>
+        wrapStreamPromoteHistoricalToolCallThinking(stream),
+      );
+    }
+    return wrapStreamPromoteHistoricalToolCallThinking(maybeStream);
+  };
 }
 
 function summarizeMessagePayload(msg: AgentMessage): { textChars: number; imageBlocks: number } {
@@ -1544,6 +1619,10 @@ export async function runEmbeddedAttempt(
         );
       }
 
+      activeSession.agent.streamFn = wrapStreamFnPromoteHistoricalToolCallThinking(
+        activeSession.agent.streamFn,
+      );
+
       if (anthropicPayloadLogger) {
         activeSession.agent.streamFn = anthropicPayloadLogger.wrapStreamFn(
           activeSession.agent.streamFn,
@@ -1573,6 +1652,31 @@ export async function runEmbeddedAttempt(
           idleTimeoutMs,
           (error) => idleTimeoutTrigger?.(error),
         );
+      }
+
+      // Fake-streaming wrappers (inner -> outer):
+      // wrapGoogleNonStreaming / wrapGcliNonStreaming convert Google API calls
+      // to non-streaming generateContent so safety filters never truncate mid-reply.
+      // wrapStreamFnWithBuffer buffers all other providers for robust reasoning-tag
+      // stripping. wrapStreamFnWithKeyRotation must be outermost so it can replay
+      // the fully-buffered stream on a fresh key after a 429.
+      activeSession.agent.streamFn = wrapGoogleNonStreaming(activeSession.agent.streamFn);
+      activeSession.agent.streamFn = wrapGcliNonStreaming(activeSession.agent.streamFn);
+      activeSession.agent.streamFn = wrapStreamFnWithBuffer(activeSession.agent.streamFn);
+      if (
+        params.keyRotationState &&
+        params.keyRotationCandidates &&
+        params.keyRotationAuthStore &&
+        params.keyRotationResolveApiKey
+      ) {
+        activeSession.agent.streamFn = wrapStreamFnWithKeyRotation({
+          streamFn: activeSession.agent.streamFn,
+          profileCandidates: params.keyRotationCandidates,
+          resolveApiKey: params.keyRotationResolveApiKey,
+          authStore: params.keyRotationAuthStore,
+          agentDir: params.agentDir,
+          rotationState: params.keyRotationState,
+        });
       }
 
       try {
@@ -1955,6 +2059,7 @@ export async function runEmbeddedAttempt(
         const hookResult = await resolvePromptBuildHookResult({
           prompt: params.prompt,
           messages: activeSession.messages,
+          systemPrompt: systemPromptText,
           hookCtx,
           hookRunner,
           legacyBeforeAgentStartResult: params.legacyBeforeAgentStartResult,

@@ -305,18 +305,17 @@ describe("message tool agent routing", () => {
 });
 
 describe("message tool explicit target guard", () => {
-  it("requires an explicit target for upload-file when configured", async () => {
+  it("requires an explicit target for send when configured and no implicit channel", async () => {
     const tool = createMessageTool({
       runMessageAction: mocks.runMessageAction as never,
       requireExplicitTarget: true,
       currentChannelProvider: "slack",
-      currentChannelId: "channel:C123",
     });
 
     await expect(
       tool.execute("1", {
-        action: "upload-file",
-        filePath: "/tmp/report.png",
+        action: "send",
+        message: "hello",
       }),
     ).rejects.toThrow(/Explicit message target required/i);
 
@@ -947,6 +946,36 @@ describe("message tool reasoning tag sanitization", () => {
       expect(call?.params?.[field]).toBe(expected);
     },
   );
+});
+
+describe("message tool implicit target from context", () => {
+  it("allows send without explicit target when currentChannelId provides implicit target", async () => {
+    mockSendResult({ channel: "signal", to: "signal:+15551234567" });
+
+    await expect(
+      executeSend({
+        toolOptions: {
+          requireExplicitTarget: true,
+          currentChannelId: "signal:+15551234567",
+          currentChannelProvider: "signal",
+        },
+        action: { message: "hello" },
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it("throws when requireExplicitTarget is set and no explicit or implicit target", async () => {
+    mockSendResult();
+
+    const tool = createMessageTool({
+      config: {} as never,
+      requireExplicitTarget: true,
+    });
+
+    await expect(tool.execute("1", { action: "send", message: "hello" })).rejects.toThrow(
+      "Explicit message target required",
+    );
+  });
 });
 
 describe("message tool sandbox passthrough", () => {

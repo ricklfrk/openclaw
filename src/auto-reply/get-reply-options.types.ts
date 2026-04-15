@@ -51,6 +51,8 @@ export type GetReplyOptions = {
   suppressTyping?: boolean;
   /** Resolved heartbeat model override (provider/model string from merged per-agent config). */
   heartbeatModelOverride?: string;
+  /** When true, use the agent's primary model for heartbeat instead of a dedicated heartbeat model. */
+  heartbeatUsePrimaryModel?: boolean;
   /** Controls bootstrap workspace context injection (default: full). */
   bootstrapContextMode?: "full" | "lightweight";
   /** If true, suppress tool error warning payloads for this run. */

@@ -5,10 +5,12 @@ import type { ThinkLevel } from "../../../auto-reply/thinking.js";
 import type { SessionSystemPromptReport } from "../../../config/sessions/types.js";
 import type { ContextEngine, ContextEnginePromptCacheInfo } from "../../../context-engine/types.js";
 import type { PluginHookBeforeAgentStartResult } from "../../../plugins/hook-before-agent-start.types.js";
+import type { AuthProfileStore } from "../../auth-profiles/types.js";
 import type { MessagingToolSend } from "../../pi-embedded-messaging.types.js";
 import type { ToolErrorSummary } from "../../tool-error-summary.js";
 import type { NormalizedUsage } from "../../usage.js";
 import type { EmbeddedRunReplayMetadata, EmbeddedRunReplayState } from "../replay-state.js";
+import type { KeyRotationState } from "../stream-key-rotation.js";
 import type { EmbeddedRunLivenessState } from "../types.js";
 import type { RunEmbeddedPiAgentParams } from "./params.js";
 import type { PreemptiveCompactionRoute } from "./preemptive-compaction.types.js";
@@ -39,6 +41,14 @@ export type EmbeddedRunAttemptParams = EmbeddedRunAttemptBase & {
   modelRegistry: ModelRegistry;
   thinkLevel: ThinkLevel;
   legacyBeforeAgentStartResult?: PluginHookBeforeAgentStartResult;
+  /** Key rotation state shared with run.ts for per-turn API key rotation. */
+  keyRotationState?: KeyRotationState;
+  /** Ordered list of auth profile candidates for key rotation. */
+  keyRotationCandidates?: Array<string | undefined>;
+  /** Auth profile store for key rotation stamping/failure tracking. */
+  keyRotationAuthStore?: AuthProfileStore;
+  /** Resolver for API keys given a profile candidate. */
+  keyRotationResolveApiKey?: (candidate: string | undefined) => Promise<string | undefined>;
 };
 
 export type EmbeddedRunAttemptResult = {

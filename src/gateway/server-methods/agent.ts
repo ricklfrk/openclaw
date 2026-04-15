@@ -469,7 +469,12 @@ export const agentHandlers: GatewayRequestHandlers = {
     }
 
     const agentIdRaw = normalizeOptionalString(request.agentId) ?? "";
-    const agentId = agentIdRaw ? normalizeAgentId(agentIdRaw) : undefined;
+    const agentIdFromRequest = agentIdRaw ? normalizeAgentId(agentIdRaw) : undefined;
+    const agentIdFromUrl =
+      !agentIdFromRequest && client?.defaultAgentIdFromUrl?.trim()
+        ? normalizeAgentId(client.defaultAgentIdFromUrl.trim())
+        : undefined;
+    const agentId = agentIdFromRequest ?? agentIdFromUrl;
     if (agentId) {
       const knownAgents = listAgentIds(cfg);
       if (!knownAgents.includes(agentId)) {
@@ -478,7 +483,7 @@ export const agentHandlers: GatewayRequestHandlers = {
           undefined,
           errorShape(
             ErrorCodes.INVALID_REQUEST,
-            `invalid agent params: unknown agent id "${request.agentId}"`,
+            `invalid agent params: unknown agent id "${agentIdFromRequest ?? agentIdFromUrl}"`,
           ),
         );
         return;
@@ -507,17 +512,24 @@ export const agentHandlers: GatewayRequestHandlers = {
         agentId,
       });
     if (agentId && requestedSessionKeyRaw) {
+      const sessionKeyShape = classifySessionKeyShape(requestedSessionKeyRaw);
       const sessionAgentId = resolveAgentIdFromSessionKey(requestedSessionKeyRaw);
       if (sessionAgentId !== agentId) {
-        respond(
-          false,
-          undefined,
-          errorShape(
-            ErrorCodes.INVALID_REQUEST,
-            `invalid agent params: agent "${request.agentId}" does not match session key agent "${sessionAgentId}"`,
-          ),
-        );
-        return;
+        if (agentIdFromUrl && sessionKeyShape === "legacy_or_alias") {
+          // URL-derived agent with legacy session key (e.g. "paperclip"):
+          // re-scope to the URL agent so it becomes agent:alice:paperclip
+          requestedSessionKey = `agent:${agentId}:${requestedSessionKeyRaw.toLowerCase()}`;
+        } else {
+          respond(
+            false,
+            undefined,
+            errorShape(
+              ErrorCodes.INVALID_REQUEST,
+              `invalid agent params: agent "${agentIdFromRequest ?? agentIdFromUrl}" does not match session key agent "${sessionAgentId}"`,
+            ),
+          );
+          return;
+        }
       }
     }
     let resolvedSessionId = normalizeOptionalString(request.sessionId);
@@ -786,7 +798,10 @@ export const agentHandlers: GatewayRequestHandlers = {
     if (wantsDelivery && resolvedChannel === INTERNAL_MESSAGE_CHANNEL) {
       const cfgResolved = cfgForAgent ?? cfg;
       try {
-        const selection = await resolveMessageChannelSelection({ cfg: cfgResolved });
+        const selection = await resolveMessageChannelSelection({
+          cfg: cfgResolved,
+          fallbackChannel: sessionEntry?.lastChannel,
+        });
         resolvedChannel = selection.channel;
         deliveryTargetMode = deliveryTargetMode ?? "implicit";
         effectivePlan = {

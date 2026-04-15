@@ -154,7 +154,8 @@ private func emitAssistantText(
     transport: TestChatTransport,
     runId: String,
     text: String,
-    seq: Int = 1)
+    seq: Int = 1,
+    sessionKey: String? = nil)
 {
     transport.emit(
         .agent(
@@ -163,13 +164,15 @@ private func emitAssistantText(
                 seq: seq,
                 stream: "assistant",
                 ts: Int(Date().timeIntervalSince1970 * 1000),
-                data: ["text": AnyCodable(text)])))
+                data: ["text": AnyCodable(text)],
+                sessionKey: sessionKey)))
 }
 
 private func emitToolStart(
     transport: TestChatTransport,
     runId: String,
-    seq: Int = 2)
+    seq: Int = 2,
+    sessionKey: String? = nil)
 {
     transport.emit(
         .agent(
@@ -183,7 +186,8 @@ private func emitToolStart(
                     "name": AnyCodable("demo"),
                     "toolCallId": AnyCodable("t1"),
                     "args": AnyCodable(["x": 1]),
-                ])))
+                ],
+                sessionKey: sessionKey)))
 }
 
 private func emitExternalFinal(
@@ -686,6 +690,21 @@ extension TestChatTransportState {
 
         try await waitUntil("history refresh after canonical external event") {
             await MainActor.run { vm.messages.count == 2 }
+        }
+    }
+
+    @Test func showsToolEventsForExternalRunsInCurrentSession() async throws {
+        let history = historyPayload()
+        let (transport, vm) = await makeViewModel(historyResponses: [history, history])
+        try await loadAndWaitBootstrap(vm: vm)
+
+        emitToolStart(
+            transport: transport,
+            runId: "external-run",
+            sessionKey: "agent:main:main")
+
+        try await waitUntil("external tool call visible") {
+            await MainActor.run { vm.pendingToolCalls.count == 1 }
         }
     }
 

@@ -1,0 +1,163 @@
+{
+  "id": "vector-memory",
+  "name": "Vector Memory",
+  "description": "Supplementary vector recall with LanceDB, multi-provider embedding, hybrid BM25+rerank retrieval, and per-agent storage. Designed to augment memory-core.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "embedding": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": ["openai-compatible", "azure-openai"]
+          },
+          "apiKey": { "type": "string", "minLength": 1 },
+          "model": { "type": "string" },
+          "baseURL": { "type": "string" },
+          "dimensions": { "type": "integer", "minimum": 1 },
+          "taskQuery": { "type": "string" },
+          "taskPassage": { "type": "string" },
+          "normalized": { "type": "boolean" },
+          "chunking": { "type": "boolean", "default": true },
+          "apiVersion": { "type": "string" }
+        },
+        "required": ["apiKey"]
+      },
+      "llm": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "apiKey": { "type": "string" },
+          "model": { "type": "string", "default": "gemini-3.1-flash-lite-preview" },
+          "baseURL": { "type": "string" },
+          "timeoutMs": { "type": "integer", "minimum": 1, "default": 30000 }
+        }
+      },
+      "dbPath": { "type": "string" },
+      "autoCapture": { "type": "boolean", "default": true },
+      "autoRecall": { "type": "boolean", "default": true },
+      "autoRecallMaxItems": { "type": "integer", "minimum": 1, "maximum": 20, "default": 3 },
+      "autoRecallMaxChars": { "type": "integer", "minimum": 64, "maximum": 8000, "default": 600 },
+      "autoRecallMinLength": { "type": "integer", "minimum": 1, "maximum": 200, "default": 10 },
+      "autoRecallTimeoutMs": {
+        "type": "integer",
+        "minimum": 500,
+        "maximum": 30000,
+        "default": 5000
+      },
+      "autoRecallExcludeAgents": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": [],
+        "description": "Agent IDs to exclude from auto-recall (e.g. cron, background agents)"
+      },
+      "extractMinMessages": { "type": "integer", "minimum": 1, "maximum": 100, "default": 4 },
+      "extractMaxChars": { "type": "integer", "minimum": 256, "maximum": 100000, "default": 8000 },
+      "retrieval": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": { "type": "string", "enum": ["hybrid", "vector"], "default": "hybrid" },
+          "vectorWeight": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.7 },
+          "bm25Weight": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.3 },
+          "minScore": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.3 },
+          "rerank": {
+            "type": "string",
+            "enum": ["cross-encoder", "lightweight", "none"],
+            "default": "cross-encoder"
+          },
+          "rerankApiKey": { "type": "string" },
+          "rerankModel": { "type": "string", "default": "jina-reranker-v3" },
+          "rerankEndpoint": { "type": "string", "default": "https://api.jina.ai/v1/rerank" },
+          "rerankProvider": {
+            "type": "string",
+            "enum": ["jina", "siliconflow", "voyage", "pinecone", "dashscope", "tei"],
+            "default": "jina"
+          },
+          "candidatePoolSize": { "type": "integer", "minimum": 10, "maximum": 100, "default": 20 },
+          "recencyHalfLifeDays": { "type": "number", "minimum": 0, "maximum": 365, "default": 14 },
+          "recencyWeight": { "type": "number", "minimum": 0, "maximum": 0.5, "default": 0.1 },
+          "filterNoise": { "type": "boolean", "default": true },
+          "lengthNormAnchor": { "type": "integer", "minimum": 0, "maximum": 5000, "default": 500 },
+          "hardMinScore": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.35 },
+          "timeDecayHalfLifeDays": { "type": "number", "minimum": 0, "maximum": 365, "default": 60 }
+        }
+      },
+      "decay": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "recencyHalfLifeDays": { "type": "number", "minimum": 1, "maximum": 365, "default": 30 },
+          "recencyWeight": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.4 },
+          "frequencyWeight": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.3 },
+          "intrinsicWeight": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.3 },
+          "staleThreshold": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.3 }
+        }
+      },
+      "tiers": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "coreAccessThreshold": { "type": "integer", "minimum": 1, "maximum": 100, "default": 10 },
+          "coreCompositeThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.7
+          },
+          "coreImportanceThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.8
+          },
+          "peripheralCompositeThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.15
+          },
+          "peripheralAgeDays": { "type": "integer", "minimum": 1, "maximum": 365, "default": 60 },
+          "workingAccessThreshold": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 3
+          },
+          "workingCompositeThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.4
+          }
+        }
+      },
+      "admission": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "default": false },
+          "preset": {
+            "type": "string",
+            "enum": ["balanced", "conservative", "high-recall"],
+            "default": "balanced"
+          },
+          "rejectThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
+          "admitThreshold": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      },
+      "noisePrototypes": { "type": "boolean", "default": true },
+      "maintenanceIntervalMinutes": {
+        "type": "integer",
+        "minimum": 5,
+        "maximum": 1440,
+        "default": 60
+      }
+    },
+    "required": ["embedding"]
+  }
+}

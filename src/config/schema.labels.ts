@@ -349,6 +349,8 @@ export const FIELD_LABELS: Record<string, string> = {
   "broadcast.*": "Broadcast Destination List",
   "skills.load.watch": "Watch Skills",
   "skills.load.watchDebounceMs": "Skills Watch Debounce (ms)",
+  "skills.limits.maxSkillsPromptChars": "Max Skills Prompt Characters",
+  "skills.limits.maxSkillsInPrompt": "Max Skills in Prompt",
   "agents.defaults.skills": "Skills",
   "agents.defaults.workspace": "Workspace",
   "agents.defaults.repoRoot": "Repo Root",

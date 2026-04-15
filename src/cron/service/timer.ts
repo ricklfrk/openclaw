@@ -626,23 +626,40 @@ export function armTimer(state: CronServiceState) {
   }
   const nextAt = nextWakeAtMs(state);
   if (!nextAt) {
-    const jobCount = state.store?.jobs.length ?? 0;
-    const enabledCount = state.store?.jobs.filter((j) => j.enabled).length ?? 0;
-    const withNextRun =
-      state.store?.jobs.filter((j) => j.enabled && hasScheduledNextRunAtMs(j.state.nextRunAtMs))
-        .length ?? 0;
-    if (enabledCount > 0) {
-      armRunningRecheckTimer(state);
-      state.deps.log.debug(
-        { jobCount, enabledCount, withNextRun, delayMs: MAX_TIMER_DELAY_MS },
-        "cron: timer armed for maintenance recheck",
+    if (!state.store) {
+      // Store couldn't be loaded (ensureLoaded failed). Schedule a retry so the
+      // scheduler recovers once the transient I/O error resolves instead of dying.
+      state.deps.log.warn(
+        { retryMs: MAX_TIMER_DELAY_MS },
+        "cron: store not loaded, scheduling retry",
       );
-      return;
+      state.timer = setTimeout(async () => {
+        try {
+          await onTimer(state);
+        } catch (err) {
+          state.deps.log.error({ err: String(err) }, "cron: timer tick failed");
+          armTimer(state);
+        }
+      }, MAX_TIMER_DELAY_MS);
+    } else {
+      const jobCount = state.store.jobs.length;
+      const enabledCount = state.store.jobs.filter((j) => j.enabled).length;
+      const withNextRun = state.store.jobs.filter(
+        (j) => j.enabled && hasScheduledNextRunAtMs(j.state.nextRunAtMs),
+      ).length;
+      if (enabledCount > 0) {
+        armRunningRecheckTimer(state);
+        state.deps.log.debug(
+          { jobCount, enabledCount, withNextRun, delayMs: MAX_TIMER_DELAY_MS },
+          "cron: timer armed for maintenance recheck",
+        );
+        return;
+      }
+      state.deps.log.debug(
+        { jobCount, enabledCount, withNextRun },
+        "cron: armTimer skipped - no jobs with nextRunAtMs",
+      );
     }
-    state.deps.log.debug(
-      { jobCount, enabledCount, withNextRun },
-      "cron: armTimer skipped - no jobs with nextRunAtMs",
-    );
     return;
   }
   const now = state.deps.nowMs();
@@ -665,6 +682,8 @@ export function armTimer(state: CronServiceState) {
   state.timer = setTimeout(() => {
     void onTimer(state).catch((err) => {
       state.deps.log.error({ err: String(err) }, "cron: timer tick failed");
+      // Belt-and-suspenders: re-arm even if onTimer throws past its finally block.
+      armTimer(state);
     });
   }, clampedDelay);
   state.deps.log.debug(

@@ -38,6 +38,8 @@ export type AgentModelEntryConfig = {
 
 export type AgentModelListConfig = {
   primary?: string;
+  /** Model override for compaction (provider/model). Falls back to primary. */
+  compact?: string;
   fallbacks?: string[];
 };
 
@@ -105,6 +107,8 @@ export type CliBackendConfig = {
   liveSession?: "claude-stdio";
   /** Prompt input mode (default: arg). */
   input?: "arg" | "stdin";
+  /** Flag to prepend before the prompt text in arg mode (e.g. "--prompt"). */
+  promptInputArg?: string;
   /** Max prompt length for arg mode (if exceeded, stdin is used). */
   maxPromptArgChars?: number;
   /** Extra env vars injected for this CLI. */
@@ -276,6 +280,8 @@ export type AgentDefaultsConfig = {
   llm?: AgentLlmConfig;
   /** Compaction tuning and pre-compaction memory flush behavior. */
   compaction?: AgentCompactionConfig;
+  /** LLM retry settings (pi-agent-core transient-error retry). */
+  retry?: AgentRetryConfig;
   /** Embedded Pi runner hardening and compatibility controls. */
   embeddedPi?: {
     /**
@@ -410,6 +416,17 @@ export type AgentDefaultsConfig = {
   };
   /** Optional sandbox settings for non-main sessions. */
   sandbox?: AgentSandboxConfig;
+};
+
+export type AgentRetryConfig = {
+  /** Enable automatic retry on transient errors (default: true). */
+  enabled?: boolean;
+  /** Maximum retry attempts per prompt call (default: 3). */
+  maxRetries?: number;
+  /** Base delay for exponential backoff in ms (default: 2000). */
+  baseDelayMs?: number;
+  /** Max server-requested delay before failing in ms (default: 60000). */
+  maxDelayMs?: number;
 };
 
 export type AgentCompactionMode = "default" | "safeguard";

@@ -166,6 +166,15 @@ export const AgentDefaultsSchema = z
       })
       .strict()
       .optional(),
+    retry: z
+      .object({
+        enabled: z.boolean().optional(),
+        maxRetries: z.number().int().nonnegative().optional(),
+        baseDelayMs: z.number().int().nonnegative().optional(),
+        maxDelayMs: z.number().int().nonnegative().optional(),
+      })
+      .strict()
+      .optional(),
     compaction: z
       .object({
         mode: z.union([z.literal("default"), z.literal("safeguard")]).optional(),

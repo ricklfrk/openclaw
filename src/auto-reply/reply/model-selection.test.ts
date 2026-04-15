@@ -71,7 +71,7 @@ describe("createModelSelectionState catalog loading", () => {
 
     expect(state.allowedModelKeys.has("openai-codex/gpt-5.4")).toBe(true);
     await expect(state.resolveDefaultThinkingLevel()).resolves.toBe("low");
-    await expect(state.resolveDefaultReasoningLevel()).resolves.toBe("on");
+    await expect(state.resolveDefaultReasoningLevel()).resolves.toBe("stream");
     expect(loadModelCatalog).not.toHaveBeenCalled();
   });
 
@@ -802,7 +802,7 @@ describe("createModelSelectionState resolveDefaultReasoningLevel", () => {
       model: "x-ai/grok-4.1-fast",
       hasModelDirective: false,
     });
-    await expect(state.resolveDefaultReasoningLevel()).resolves.toBe("on");
+    await expect(state.resolveDefaultReasoningLevel()).resolves.toBe("stream");
   });
 
   it("returns off when catalog model has no reasoning", async () => {

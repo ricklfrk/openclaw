@@ -252,7 +252,7 @@ Documented exceptions:
 - `https://<magicdns>/` (Serve)
 - `http://127.0.0.1:18789/` (on the gateway host)
 
-**Insecure-auth toggle behavior:**
+**Insecure-auth toggle (localhost + private networks):**
 
 ```json5
 {
@@ -264,12 +264,10 @@ Documented exceptions:
 }
 ```
 
-`allowInsecureAuth` is a local compatibility toggle only:
-
-- It allows localhost Control UI sessions to proceed without device identity in
-  non-secure HTTP contexts.
-- It does not bypass pairing checks.
-- It does not relax remote (non-localhost) device identity requirements.
+`allowInsecureAuth` allows Control UI connections **without device identity** from
+localhost and private networks (RFC 1918 LAN, link-local, Tailnet/CGNAT IPs).
+Public internet connections are still rejected. Pairing checks still apply for
+non-localhost private network connections.
 
 **Break-glass only:**
 

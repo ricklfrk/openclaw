@@ -2,6 +2,7 @@ import type { ChatType } from "../channels/chat-type.js";
 import type {
   AgentContextLimitsConfig,
   AgentDefaultsConfig,
+  AgentRetryConfig,
   EmbeddedPiExecutionContract,
 } from "./types.agent-defaults.js";
 import type {
@@ -112,6 +113,12 @@ export type AgentConfig = {
     /** Optional per-agent execution contract override. */
     executionContract?: EmbeddedPiExecutionContract;
   };
+  /** Optional per-agent retry overrides. */
+  retry?: AgentRetryConfig;
+  /** Optional per-agent compaction overrides (merged with agents.defaults.compaction). */
+  compaction?: AgentDefaultsConfig["compaction"];
+  /** Optional per-agent context token budget override. */
+  contextTokens?: number;
   /** Optional per-agent sandbox overrides. */
   sandbox?: AgentSandboxConfig;
   /** Optional per-agent stream params (e.g. cacheRetention, temperature). */

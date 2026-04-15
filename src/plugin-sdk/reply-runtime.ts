@@ -58,3 +58,9 @@ export type { ReplyPayload } from "./reply-payload.js";
 export type { FinalizedMsgContext, MsgContext } from "../auto-reply/templating.js";
 export { generateConversationLabel } from "../auto-reply/reply/conversation-label-generator.js";
 export type { ConversationLabelParams } from "../auto-reply/reply/conversation-label-generator.js";
+export { deliverOutboundPayloads } from "../infra/outbound/deliver.js";
+export { buildOutboundSessionContext } from "../infra/outbound/session-context.js";
+export {
+  resolveHeartbeatDeliveryTarget,
+  resolveHeartbeatSenderContext,
+} from "../infra/outbound/targets.js";

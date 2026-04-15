@@ -132,7 +132,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
             type: "boolean",
             title: "Diagnostics Enabled",
             description:
-              "Master toggle for diagnostics instrumentation output in logs and telemetry wiring paths. Defaults to enabled; set false only in tightly constrained environments.",
+              "Master toggle for diagnostics instrumentation output in logs and telemetry wiring paths. Keep enabled for normal observability, and disable only in tightly constrained environments.",
           },
           flags: {
             type: "array",
@@ -618,7 +618,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 type: "boolean",
                 title: "Browser Dangerously Allow Private Network",
                 description:
-                  "Allows access to private-network address ranges from browser tooling. Default is disabled when unset; enable only for explicitly trusted private-network destinations.",
+                  "Allows access to private-network address ranges from browser tooling. Default is enabled for trusted-network operator setups; disable to enforce strict public-only resolution checks.",
               },
               allowedHostnames: {
                 type: "array",
@@ -671,7 +671,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                   type: "string",
                   title: "Browser Profile User Data Dir",
                   description:
-                    "Per-profile Chromium user data directory for existing-session attachment through Chrome DevTools MCP. Use this for Brave, Edge, Chromium, or non-default Chrome profiles when the built-in auto-connect path would pick the wrong browser data directory on the selected host or browser node.",
+                    "Per-profile Chromium user data directory for existing-session attachment through Chrome DevTools MCP. Use this for host-local Brave, Edge, Chromium, or non-default Chrome profiles when the built-in auto-connect path would pick the wrong browser data directory.",
                 },
                 driver: {
                   anyOf: [
@@ -690,7 +690,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                   ],
                   title: "Browser Profile Driver",
                   description:
-                    'Per-profile browser driver mode. Use "openclaw" (or legacy "clawd") for CDP-based profiles, or use "existing-session" for Chrome DevTools MCP attachment on the selected host or browser node.',
+                    'Per-profile browser driver mode. Use "openclaw" (or legacy "clawd") for CDP-based profiles, or use "existing-session" for host-local Chrome DevTools MCP attachment.',
                 },
                 attachOnly: {
                   type: "boolean",
@@ -2734,10 +2734,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                           "azure-openai-responses",
                         ],
                       },
-                      baseUrl: {
-                        type: "string",
-                        minLength: 1,
-                      },
                       reasoning: {
                         type: "boolean",
                       },
@@ -2771,51 +2767,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                           cacheWrite: {
                             type: "number",
                           },
-                          tieredPricing: {
-                            type: "array",
-                            items: {
-                              type: "object",
-                              properties: {
-                                input: {
-                                  type: "number",
-                                },
-                                output: {
-                                  type: "number",
-                                },
-                                cacheRead: {
-                                  type: "number",
-                                },
-                                cacheWrite: {
-                                  type: "number",
-                                },
-                                range: {
-                                  anyOf: [
-                                    {
-                                      type: "array",
-                                      items: [
-                                        {
-                                          type: "number",
-                                        },
-                                        {
-                                          type: "number",
-                                        },
-                                      ],
-                                    },
-                                    {
-                                      type: "array",
-                                      items: [
-                                        {
-                                          type: "number",
-                                        },
-                                      ],
-                                    },
-                                  ],
-                                },
-                              },
-                              required: ["input", "output", "cacheRead", "cacheWrite", "range"],
-                              additionalProperties: false,
-                            },
-                          },
                         },
                         additionalProperties: false,
                       },
@@ -2847,9 +2798,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                           supportsStore: {
                             type: "boolean",
                           },
-                          supportsPromptCacheKey: {
-                            type: "boolean",
-                          },
                           supportsDeveloperRole: {
                             type: "boolean",
                           },
@@ -2867,13 +2815,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                           },
                           requiresStringContent: {
                             type: "boolean",
-                          },
-                          visibleReasoningDetailTypes: {
-                            type: "array",
-                            items: {
-                              type: "string",
-                              minLength: 1,
-                            },
                           },
                           maxTokensField: {
                             anyOf: [
@@ -3013,28 +2954,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 },
                 additionalProperties: {},
               },
-              embeddedHarness: {
-                type: "object",
-                properties: {
-                  runtime: {
-                    type: "string",
-                    title: "Default Embedded Harness Runtime",
-                    description:
-                      "Embedded harness runtime: auto, pi, or a registered plugin harness id such as codex.",
-                  },
-                  fallback: {
-                    type: "string",
-                    enum: ["pi", "none"],
-                    title: "Default Embedded Harness Fallback",
-                    description:
-                      "Embedded harness fallback when no plugin harness matches. Selected plugin harness failures surface directly. Set none to disable automatic PI fallback.",
-                  },
-                },
-                additionalProperties: false,
-                title: "Default Embedded Harness",
-                description:
-                  "Default embedded agent harness policy. Use runtime=auto for plugin harness selection, runtime=pi for built-in PI, or a registered harness id such as codex.",
-              },
               model: {
                 anyOf: [
                   {
@@ -3047,6 +2966,9 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                         type: "string",
                         title: "Primary Model",
                         description: "Primary model (provider/model).",
+                      },
+                      compact: {
+                        type: "string",
                       },
                       fallbacks: {
                         type: "array",
@@ -3076,6 +2998,9 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                         description:
                           "Optional image model (provider/model) used when the primary model lacks image input.",
                       },
+                      compact: {
+                        type: "string",
+                      },
                       fallbacks: {
                         type: "array",
                         items: {
@@ -3102,6 +3027,9 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                         title: "Image Generation Model",
                         description:
                           "Optional image-generation model (provider/model) used by the shared image generation capability.",
+                      },
+                      compact: {
+                        type: "string",
                       },
                       fallbacks: {
                         type: "array",
@@ -3190,6 +3118,9 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                         description:
                           "Optional PDF model (provider/model) for the PDF analysis tool. Defaults to imageModel, then session model.",
                       },
+                      compact: {
+                        type: "string",
+                      },
                       fallbacks: {
                         type: "array",
                         items: {
@@ -3259,63 +3190,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 description:
                   "Optional default skill allowlist inherited by agents that omit agents.list[].skills. Omit for unrestricted skills, set [] to give inheriting agents no skills, and remember explicit agents.list[].skills replaces this default instead of merging with it.",
               },
-              silentReply: {
-                type: "object",
-                properties: {
-                  direct: {
-                    anyOf: [
-                      {
-                        type: "string",
-                        const: "allow",
-                      },
-                      {
-                        type: "string",
-                        const: "disallow",
-                      },
-                    ],
-                  },
-                  group: {
-                    anyOf: [
-                      {
-                        type: "string",
-                        const: "allow",
-                      },
-                      {
-                        type: "string",
-                        const: "disallow",
-                      },
-                    ],
-                  },
-                  internal: {
-                    anyOf: [
-                      {
-                        type: "string",
-                        const: "allow",
-                      },
-                      {
-                        type: "string",
-                        const: "disallow",
-                      },
-                    ],
-                  },
-                },
-                additionalProperties: false,
-              },
-              silentReplyRewrite: {
-                type: "object",
-                properties: {
-                  direct: {
-                    type: "boolean",
-                  },
-                  group: {
-                    type: "boolean",
-                  },
-                  internal: {
-                    type: "boolean",
-                  },
-                },
-                additionalProperties: false,
-              },
               repoRoot: {
                 type: "string",
                 title: "Repo Root",
@@ -3324,43 +3198,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
               },
               systemPromptOverride: {
                 type: "string",
-              },
-              promptOverlays: {
-                type: "object",
-                properties: {
-                  gpt5: {
-                    type: "object",
-                    properties: {
-                      personality: {
-                        anyOf: [
-                          {
-                            type: "string",
-                            const: "friendly",
-                          },
-                          {
-                            type: "string",
-                            const: "on",
-                          },
-                          {
-                            type: "string",
-                            const: "off",
-                          },
-                        ],
-                        title: "GPT-5 Personality Overlay",
-                        description:
-                          'Friendly interaction-style layer for GPT-5-family models ("friendly" or "on" enables it; "off" disables only that layer). The tagged behavior contract remains enabled for matching GPT-5 models.',
-                      },
-                    },
-                    additionalProperties: false,
-                    title: "GPT-5 Prompt Overlay",
-                    description:
-                      "Shared GPT-5-family prompt overlay applied to matching model ids across providers such as OpenAI, OpenRouter, OpenCode, Codex, and compatible gateways.",
-                  },
-                },
-                additionalProperties: false,
-                title: "Prompt Overlays",
-                description:
-                  "Provider-independent prompt overlays applied by model family before provider-specific prompt hooks.",
               },
               skipBootstrap: {
                 type: "boolean",
@@ -3386,7 +3223,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 maximum: 9007199254740991,
                 title: "Bootstrap Max Chars",
                 description:
-                  "Max characters of each workspace bootstrap file injected into the system prompt before truncation (default: 12000).",
+                  "Max characters of each workspace bootstrap file injected into the system prompt before truncation (default: 20000).",
               },
               bootstrapTotalMaxChars: {
                 type: "integer",
@@ -3394,22 +3231,22 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 maximum: 9007199254740991,
                 title: "Bootstrap Total Max Chars",
                 description:
-                  "Max total characters across all injected workspace bootstrap files (default: 60000).",
+                  "Max total characters across all injected workspace bootstrap files (default: 150000).",
               },
-              experimental: {
-                type: "object",
-                properties: {
-                  localModelLean: {
-                    type: "boolean",
-                    title: "Enable Lean Local Model Mode (Experimental)",
-                    description:
-                      "Experimental local-model prompt trim. When enabled, OpenClaw drops heavyweight default tools like browser, cron, and message for weaker or smaller local-model backends.",
+              localModelMode: {
+                anyOf: [
+                  {
+                    type: "string",
+                    const: "default",
                   },
-                },
-                additionalProperties: false,
-                title: "Experimental Agent Flags",
+                  {
+                    type: "string",
+                    const: "lean",
+                  },
+                ],
+                title: "Local Model Mode",
                 description:
-                  "Experimental agent-default flags. Keep these off unless you are intentionally testing a preview surface.",
+                  'Local-model prompt profile: "default" keeps the standard tool surface, while "lean" drops heavyweight non-essential tools for smaller or weaker models.',
               },
               bootstrapPromptTruncationWarning: {
                 anyOf: [
@@ -3432,112 +3269,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
               },
               userTimezone: {
                 type: "string",
-              },
-              startupContext: {
-                type: "object",
-                properties: {
-                  enabled: {
-                    type: "boolean",
-                    title: "Enable Startup Context",
-                    description:
-                      "Enable the startup-context prelude for bare session resets (default: true). Disable this to fall back to prompt-only behavior with no runtime-loaded daily memory.",
-                  },
-                  applyOn: {
-                    type: "array",
-                    items: {
-                      anyOf: [
-                        {
-                          type: "string",
-                          const: "new",
-                        },
-                        {
-                          type: "string",
-                          const: "reset",
-                        },
-                      ],
-                    },
-                    title: "Startup Context Apply On",
-                    description:
-                      'Chooses which bare reset commands get startup context: include "new", "reset", or both (default: ["new","reset"]).',
-                  },
-                  dailyMemoryDays: {
-                    type: "integer",
-                    minimum: 1,
-                    maximum: 14,
-                    title: "Startup Context Daily Memory Days",
-                    description:
-                      "Number of dated memory files to load counting backward from today in the configured user timezone (default: 2 for today + yesterday).",
-                  },
-                  maxFileBytes: {
-                    type: "integer",
-                    minimum: 1,
-                    maximum: 65536,
-                    title: "Startup Context Max File Bytes",
-                    description:
-                      "Maximum bytes allowed per daily memory file when building startup context (default: 16384). Files over this boundary-safe read limit are skipped.",
-                  },
-                  maxFileChars: {
-                    type: "integer",
-                    minimum: 1,
-                    maximum: 10000,
-                    title: "Startup Context Max File Chars",
-                    description:
-                      "Maximum characters retained from each loaded daily memory file in the startup prelude (default: 1200).",
-                  },
-                  maxTotalChars: {
-                    type: "integer",
-                    minimum: 1,
-                    maximum: 50000,
-                    title: "Startup Context Max Total Chars",
-                    description:
-                      "Maximum total characters retained across all loaded daily memory files in the startup prelude (default: 2800). Additional files are truncated from the prelude once this cap is reached.",
-                  },
-                },
-                additionalProperties: false,
-                title: "Startup Context",
-                description:
-                  'Runtime-owned first-turn prelude for bare "/new" and "/reset". Use this to control whether recent daily memory files are preloaded into the first prompt instead of asking the model to decide what to read.',
-              },
-              contextLimits: {
-                type: "object",
-                properties: {
-                  memoryGetMaxChars: {
-                    type: "integer",
-                    minimum: 1,
-                    maximum: 250000,
-                    title: "Default memory_get Max Chars",
-                    description:
-                      "Default max characters returned by memory_get before truncation metadata and continuation notice are added. Increase to approximate older larger excerpts, but keep it bounded.",
-                  },
-                  memoryGetDefaultLines: {
-                    type: "integer",
-                    minimum: 1,
-                    maximum: 5000,
-                    title: "Default memory_get Line Window",
-                    description:
-                      "Default memory_get line window used when requests omit lines. This controls how many source lines are selected before the max-char cap is applied.",
-                  },
-                  toolResultMaxChars: {
-                    type: "integer",
-                    minimum: 1,
-                    maximum: 250000,
-                    title: "Default Tool Result Max Chars",
-                    description:
-                      "Default max characters kept for a single live tool result before truncation. This affects both persisted live tool-result writes and overflow-recovery truncation heuristics.",
-                  },
-                  postCompactionMaxChars: {
-                    type: "integer",
-                    minimum: 1,
-                    maximum: 50000,
-                    title: "Default Post-compaction Max Chars",
-                    description:
-                      "Default max characters retained from AGENTS.md during post-compaction context refresh injection. Lower this to make compaction recovery cheaper, or raise it for agents that depend on longer startup guidance.",
-                  },
-                },
-                additionalProperties: false,
-                title: "Default Context Limits",
-                description:
-                  "Focused per-agent-context budget defaults for selected high-volume excerpts and injected prompt blocks. Use this to tune bounded read/injection sizes without reopening any unbounded call paths.",
               },
               timeFormat: {
                 anyOf: [
@@ -3642,14 +3373,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                           const: "jsonl",
                         },
                       ],
-                    },
-                    jsonlDialect: {
-                      type: "string",
-                      const: "claude-stream-json",
-                    },
-                    liveSession: {
-                      type: "string",
-                      const: "claude-stdio",
                     },
                     input: {
                       anyOf: [
@@ -4530,7 +4253,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 properties: {
                   idleTimeoutSeconds: {
                     description:
-                      "Idle timeout for LLM streaming responses in seconds. If no token is received within this time, the request is aborted. Set to 0 to disable. Default: 120 seconds.",
+                      "Idle timeout for LLM streaming responses in seconds. If no token is received within this time, the request is aborted. Set to 0 to disable. Default: 60 seconds.",
                     type: "integer",
                     minimum: 0,
                     maximum: 9007199254740991,
@@ -4594,9 +4317,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                     description:
                       "Maximum fraction of total context budget allowed for retained history after compaction (range 0.1-0.9). Use lower shares for more generation headroom or higher shares for deeper historical continuity.",
                   },
-                  customInstructions: {
-                    type: "string",
-                  },
                   identifierPolicy: {
                     anyOf: [
                       {
@@ -4621,6 +4341,9 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                     title: "Compaction Identifier Instructions",
                     description:
                       'Custom identifier-preservation instruction text used when identifierPolicy="custom". Keep this explicit and safety-focused so compaction summaries do not rewrite opaque IDs, URLs, hosts, or ports.',
+                  },
+                  customInstructions: {
+                    type: "string",
                   },
                   recentTurnsPreserve: {
                     type: "integer",
@@ -4733,23 +4456,41 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                     description:
                       "Pre-compaction memory flush settings that run an agentic memory write before heavy compaction. Keep enabled for long sessions so salient context is persisted before aggressive trimming.",
                   },
-                  truncateAfterCompaction: {
-                    type: "boolean",
-                    title: "Truncate After Compaction",
-                    description:
-                      "When enabled, rewrites the session JSONL file after compaction to remove entries that were summarized. Prevents unbounded file growth in long-running sessions with many compaction cycles. Default: false.",
-                  },
                   notifyUser: {
                     type: "boolean",
                     title: "Compaction Notify User",
                     description:
-                      "When enabled, sends brief compaction notices to the user when compaction starts and when it completes (for example, '🧹 Compacting context...' and '🧹 Compaction complete'). Disabled by default to keep compaction silent and non-intrusive.",
+                      "When enabled, sends a brief compaction notice to the user (e.g. '🧹 Compacting context...') when compaction starts. Disabled by default to keep compaction silent and non-intrusive.",
                   },
                 },
                 additionalProperties: false,
                 title: "Compaction",
                 description:
                   "Compaction tuning for when context nears token limits, including history share, reserve headroom, and pre-compaction memory flush behavior. Use this when long-running sessions need stable continuity under tight context windows.",
+              },
+              retry: {
+                type: "object",
+                properties: {
+                  enabled: {
+                    type: "boolean",
+                  },
+                  maxRetries: {
+                    type: "integer",
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  baseDelayMs: {
+                    type: "integer",
+                    exclusiveMinimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  maxDelayMs: {
+                    type: "integer",
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                },
+                additionalProperties: false,
               },
               embeddedPi: {
                 type: "object",
@@ -4772,21 +4513,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                     title: "Embedded Pi Project Settings Policy",
                     description:
                       'How embedded Pi handles workspace-local `.pi/config/settings.json`: "sanitize" (default) strips shellPath/shellCommandPrefix, "ignore" disables project settings entirely, and "trusted" applies project settings as-is.',
-                  },
-                  executionContract: {
-                    anyOf: [
-                      {
-                        type: "string",
-                        const: "default",
-                      },
-                      {
-                        type: "string",
-                        const: "strict-agentic",
-                      },
-                    ],
-                    title: "Embedded Pi Execution Contract",
-                    description:
-                      'Embedded Pi execution contract: "default" keeps the standard runner behavior, while "strict-agentic" keeps OpenAI/OpenAI Codex GPT-5-family runs acting until they hit a real blocker instead of stopping at plans or filler.',
                   },
                 },
                 additionalProperties: false,
@@ -4823,10 +4549,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                   {
                     type: "string",
                     const: "adaptive",
-                  },
-                  {
-                    type: "string",
-                    const: "max",
                   },
                 ],
               },
@@ -5096,14 +4818,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                     title: "Heartbeat Suppress Tool Error Warnings",
                     description: "Suppress tool error warning payloads during heartbeat runs.",
                   },
-                  timeoutSeconds: {
-                    type: "integer",
-                    exclusiveMinimum: 0,
-                    maximum: 9007199254740991,
-                    title: "Heartbeat Timeout (Seconds)",
-                    description:
-                      "Maximum time in seconds allowed for a heartbeat agent turn before it is aborted. Leave unset to use agents.defaults.timeoutSeconds.",
-                  },
                   lightContext: {
                     type: "boolean",
                   },
@@ -5160,6 +4874,9 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                         type: "object",
                         properties: {
                           primary: {
+                            type: "string",
+                          },
+                          compact: {
                             type: "string",
                           },
                           fallbacks: {
@@ -5752,28 +5469,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 systemPromptOverride: {
                   type: "string",
                 },
-                embeddedHarness: {
-                  type: "object",
-                  properties: {
-                    runtime: {
-                      type: "string",
-                      title: "Agent Embedded Harness Runtime",
-                      description:
-                        "Per-agent embedded harness runtime: auto, pi, or a registered plugin harness id such as codex.",
-                    },
-                    fallback: {
-                      type: "string",
-                      enum: ["pi", "none"],
-                      title: "Agent Embedded Harness Fallback",
-                      description:
-                        "Per-agent embedded harness fallback. Set none to disable automatic PI fallback for this agent.",
-                    },
-                  },
-                  additionalProperties: false,
-                  title: "Agent Embedded Harness",
-                  description:
-                    "Per-agent embedded harness policy override. Use fallback=none to make missing plugin harness selection fail instead of falling back to PI.",
-                },
                 model: {
                   anyOf: [
                     {
@@ -5783,6 +5478,9 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                       type: "object",
                       properties: {
                         primary: {
+                          type: "string",
+                        },
+                        compact: {
                           type: "string",
                         },
                         fallbacks: {
@@ -5798,7 +5496,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 },
                 thinkingDefault: {
                   type: "string",
-                  enum: ["off", "minimal", "low", "medium", "high", "xhigh", "adaptive", "max"],
+                  enum: ["off", "minimal", "low", "medium", "high", "xhigh", "adaptive"],
                   title: "Agent Thinking Default",
                   description:
                     "Optional per-agent default thinking level. Overrides agents.defaults.thinkingDefault for this agent when no per-message or session override is set.",
@@ -6276,64 +5974,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                   },
                   additionalProperties: false,
                 },
-                skillsLimits: {
-                  type: "object",
-                  properties: {
-                    maxSkillsPromptChars: {
-                      type: "integer",
-                      minimum: 0,
-                      maximum: 9007199254740991,
-                      title: "Agent Skills Prompt Max Chars",
-                      description:
-                        "Per-agent override for the skills prompt character budget. This extends the existing skills.limits.maxSkillsPromptChars path instead of routing the same budget through contextLimits.",
-                    },
-                  },
-                  additionalProperties: false,
-                  title: "Agent Skills Limits",
-                  description:
-                    "Optional per-agent overrides for skills subsystem budgets. Use this when an agent needs a different skills prompt budget without introducing a second generic context-limits path.",
-                },
-                contextLimits: {
-                  type: "object",
-                  properties: {
-                    memoryGetMaxChars: {
-                      type: "integer",
-                      minimum: 1,
-                      maximum: 250000,
-                      title: "Agent memory_get Max Chars",
-                      description:
-                        "Per-agent override for the default memory_get max character budget.",
-                    },
-                    memoryGetDefaultLines: {
-                      type: "integer",
-                      minimum: 1,
-                      maximum: 5000,
-                      title: "Agent memory_get Line Window",
-                      description:
-                        "Per-agent override for the default memory_get line window when lines is omitted.",
-                    },
-                    toolResultMaxChars: {
-                      type: "integer",
-                      minimum: 1,
-                      maximum: 250000,
-                      title: "Agent Tool Result Max Chars",
-                      description:
-                        "Per-agent override for the live tool-result max character budget.",
-                    },
-                    postCompactionMaxChars: {
-                      type: "integer",
-                      minimum: 1,
-                      maximum: 50000,
-                      title: "Agent Post-compaction Max Chars",
-                      description:
-                        "Per-agent override for the post-compaction AGENTS.md excerpt budget.",
-                    },
-                  },
-                  additionalProperties: false,
-                  title: "Agent Context Limits",
-                  description:
-                    "Optional per-agent overrides for the focused context budget knobs. Omitted fields inherit agents.defaults.contextLimits.",
-                },
                 heartbeat: {
                   type: "object",
                   properties: {
@@ -6404,16 +6044,8 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                     },
                     suppressToolErrorWarnings: {
                       type: "boolean",
-                      title: "Heartbeat Suppress Tool Error Warnings",
+                      title: "Agent Heartbeat Suppress Tool Error Warnings",
                       description: "Suppress tool error warning payloads during heartbeat runs.",
-                    },
-                    timeoutSeconds: {
-                      type: "integer",
-                      exclusiveMinimum: 0,
-                      maximum: 9007199254740991,
-                      title: "Heartbeat Timeout (Seconds)",
-                      description:
-                        "Per-agent maximum time in seconds allowed for a heartbeat agent turn before it is aborted. Leave unset to inherit the merged heartbeat/default agent timeout.",
                     },
                     lightContext: {
                       type: "boolean",
@@ -6482,6 +6114,9 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                             primary: {
                               type: "string",
                             },
+                            compact: {
+                              type: "string",
+                            },
                             fallbacks: {
                               type: "array",
                               items: {
@@ -6502,10 +6137,34 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                   },
                   additionalProperties: false,
                 },
-                embeddedPi: {
+                retry: {
                   type: "object",
                   properties: {
-                    executionContract: {
+                    enabled: {
+                      type: "boolean",
+                    },
+                    maxRetries: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    baseDelayMs: {
+                      type: "integer",
+                      exclusiveMinimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    maxDelayMs: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                  },
+                  additionalProperties: false,
+                },
+                compaction: {
+                  type: "object",
+                  properties: {
+                    mode: {
                       anyOf: [
                         {
                           type: "string",
@@ -6513,18 +6172,128 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                         },
                         {
                           type: "string",
-                          const: "strict-agentic",
+                          const: "safeguard",
                         },
                       ],
-                      title: "Agent Embedded Pi Execution Contract",
-                      description:
-                        'Optional per-agent embedded Pi execution contract override. Set "strict-agentic" to keep that agent acting through plan-only turns on OpenAI/OpenAI Codex GPT-5-family runs, or "default" to inherit the standard runner behavior.',
+                    },
+                    reserveTokens: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    keepRecentTokens: {
+                      type: "integer",
+                      exclusiveMinimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    reserveTokensFloor: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    maxHistoryShare: {
+                      type: "number",
+                      minimum: 0.1,
+                      maximum: 0.9,
+                    },
+                    identifierPolicy: {
+                      anyOf: [
+                        {
+                          type: "string",
+                          const: "strict",
+                        },
+                        {
+                          type: "string",
+                          const: "off",
+                        },
+                        {
+                          type: "string",
+                          const: "custom",
+                        },
+                      ],
+                    },
+                    identifierInstructions: {
+                      type: "string",
+                    },
+                    customInstructions: {
+                      type: "string",
+                    },
+                    recentTurnsPreserve: {
+                      type: "integer",
+                      minimum: 0,
+                      maximum: 12,
+                    },
+                    qualityGuard: {
+                      type: "object",
+                      properties: {
+                        enabled: {
+                          type: "boolean",
+                        },
+                        maxRetries: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      additionalProperties: false,
+                    },
+                    postIndexSync: {
+                      type: "string",
+                      enum: ["off", "async", "await"],
+                    },
+                    postCompactionSections: {
+                      type: "array",
+                      items: {
+                        type: "string",
+                      },
+                    },
+                    model: {
+                      type: "string",
+                    },
+                    timeoutSeconds: {
+                      type: "integer",
+                      exclusiveMinimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    memoryFlush: {
+                      type: "object",
+                      properties: {
+                        enabled: {
+                          type: "boolean",
+                        },
+                        softThresholdTokens: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        forceFlushTranscriptBytes: {
+                          anyOf: [
+                            {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            {
+                              type: "string",
+                            },
+                          ],
+                        },
+                        prompt: {
+                          type: "string",
+                        },
+                        systemPrompt: {
+                          type: "string",
+                        },
+                      },
+                      additionalProperties: false,
                     },
                   },
                   additionalProperties: false,
-                  title: "Agent Embedded Pi",
-                  description:
-                    "Optional per-agent embedded Pi overrides. Use this to opt specific agents into stricter GPT-5 execution behavior without changing the global default.",
+                },
+                contextTokens: {
+                  type: "integer",
+                  exclusiveMinimum: 0,
+                  maximum: 9007199254740991,
                 },
                 sandbox: {
                   type: "object",
@@ -9216,18 +8985,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 title: "Media Understanding Concurrency",
                 description:
                   "Maximum number of concurrent media understanding operations per turn across image, audio, and video tasks. Lower this in resource-constrained deployments to prevent CPU/network saturation.",
-              },
-              asyncCompletion: {
-                type: "object",
-                properties: {
-                  directSend: {
-                    type: "boolean",
-                    title: "Async Media Completion Direct Send",
-                    description:
-                      "Enable direct channel sends for completed async music/video generation tasks instead of relying on the requester session wake path. Default off so detached media completion keeps the legacy model-delivery flow unless you opt in.",
-                  },
-                },
-                additionalProperties: false,
               },
               image: {
                 type: "object",
@@ -17681,7 +17438,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 type: "boolean",
                 title: "Enable Structured Plan Tool",
                 description:
-                  "Enable the experimental structured `update_plan` tool for non-trivial multi-step work tracking. Leave this off unless you explicitly want the tool outside strict-agentic embedded Pi runs.",
+                  "Enable or disable the experimental structured `update_plan` tool for non-trivial multi-step work tracking. OpenAI and OpenAI Codex runs auto-enable it when this flag is unset; set false to disable that auto-enable.",
               },
             },
             additionalProperties: false,
@@ -17753,6 +17510,10 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                             {
                               type: "string",
                               const: "dm",
+                            },
+                            {
+                              type: "string",
+                              const: "webhook",
                             },
                           ],
                           title: "Binding Peer Kind",
@@ -17858,6 +17619,10 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                             {
                               type: "string",
                               const: "dm",
+                            },
+                            {
+                              type: "string",
+                              const: "webhook",
                             },
                           ],
                           title: "Binding Peer Kind",
@@ -18828,7 +18593,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
         default: {
           native: "auto",
           nativeSkills: "auto",
-          modelsWrite: true,
           restart: true,
           ownerDisplay: "raw",
         },
@@ -18869,13 +18633,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
             title: "Text Commands",
             description:
               "Enables text-command parsing in chat input in addition to native command surfaces where available. Keep this enabled for compatibility across channels that do not support native command registration.",
-          },
-          modelsWrite: {
-            default: true,
-            type: "boolean",
-            title: "Allow /models writes",
-            description:
-              "Allow model-management write commands such as `/models add` to register provider/model entries directly into config and make them available without restarting the gateway (default: true).",
           },
           bash: {
             type: "boolean",
@@ -18978,7 +18735,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
               "Defines elevated command allow rules by channel and sender for owner-level command surfaces. Use narrow provider-specific identities so privileged commands are not exposed to broad chat audiences.",
           },
         },
-        required: ["native", "nativeSkills", "modelsWrite", "restart", "ownerDisplay"],
+        required: ["native", "nativeSkills", "restart", "ownerDisplay"],
         additionalProperties: false,
         title: "Commands",
         description:
@@ -20953,31 +20710,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 description:
                   "Optional filesystem root for Control UI assets (defaults to dist/control-ui).",
               },
-              embedSandbox: {
-                anyOf: [
-                  {
-                    type: "string",
-                    const: "strict",
-                  },
-                  {
-                    type: "string",
-                    const: "scripts",
-                  },
-                  {
-                    type: "string",
-                    const: "trusted",
-                  },
-                ],
-                title: "Control UI Embed Sandbox Mode",
-                description:
-                  'Iframe sandbox policy for hosted Control UI embeds. "strict" disables scripts, "scripts" allows interactive embeds while keeping origin isolation (default), and "trusted" adds `allow-same-origin` for same-site documents that intentionally need stronger privileges.',
-              },
-              allowExternalEmbedUrls: {
-                type: "boolean",
-                title: "Allow External Control UI Embed URLs",
-                description:
-                  "DANGEROUS toggle that allows hosted embeds to load absolute external http(s) URLs. Keep this off unless your Control UI intentionally embeds trusted third-party pages; hosted /__openclaw__/canvas and /__openclaw__/a2ui documents do not need it.",
-              },
               allowedOrigins: {
                 type: "array",
                 items: {
@@ -21303,7 +21035,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
             maximum: 9007199254740991,
             title: "Gateway Channel Stale Event Threshold (min)",
             description:
-              "How many minutes a connected channel can go without provider-proven transport activity before the health monitor treats it as a stale socket and triggers a restart. Default: 30.",
+              "How many minutes a connected channel can go without receiving any event before the health monitor treats it as a stale socket and triggers a restart. Default: 30.",
           },
           channelMaxRestartsPerHour: {
             type: "integer",
@@ -22884,75 +22616,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
         description:
           "Plugin system controls for enabling extensions, constraining load scope, configuring entries, and tracking installs. Keep plugin policy explicit and least-privilege in production environments.",
       },
-      surfaces: {
-        type: "object",
-        propertyNames: {
-          type: "string",
-        },
-        additionalProperties: {
-          type: "object",
-          properties: {
-            silentReply: {
-              type: "object",
-              properties: {
-                direct: {
-                  anyOf: [
-                    {
-                      type: "string",
-                      const: "allow",
-                    },
-                    {
-                      type: "string",
-                      const: "disallow",
-                    },
-                  ],
-                },
-                group: {
-                  anyOf: [
-                    {
-                      type: "string",
-                      const: "allow",
-                    },
-                    {
-                      type: "string",
-                      const: "disallow",
-                    },
-                  ],
-                },
-                internal: {
-                  anyOf: [
-                    {
-                      type: "string",
-                      const: "allow",
-                    },
-                    {
-                      type: "string",
-                      const: "disallow",
-                    },
-                  ],
-                },
-              },
-              additionalProperties: false,
-            },
-            silentReplyRewrite: {
-              type: "object",
-              properties: {
-                direct: {
-                  type: "boolean",
-                },
-                group: {
-                  type: "boolean",
-                },
-                internal: {
-                  type: "boolean",
-                },
-              },
-              additionalProperties: false,
-            },
-          },
-          additionalProperties: false,
-        },
-      },
     },
     required: ["commands"],
     additionalProperties: false,
@@ -23285,7 +22948,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     },
     "diagnostics.enabled": {
       label: "Diagnostics Enabled",
-      help: "Master toggle for diagnostics instrumentation output in logs and telemetry wiring paths. Defaults to enabled; set false only in tightly constrained environments.",
+      help: "Master toggle for diagnostics instrumentation output in logs and telemetry wiring paths. Keep enabled for normal observability, and disable only in tightly constrained environments.",
       tags: ["observability"],
     },
     "diagnostics.flags": {
@@ -23438,100 +23101,10 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
       help: "Shared default settings inherited by agents unless overridden per entry in agents.list. Use defaults to enforce consistent baseline behavior and reduce duplicated per-agent configuration.",
       tags: ["advanced"],
     },
-    "agents.defaults.contextLimits": {
-      label: "Default Context Limits",
-      help: "Focused per-agent-context budget defaults for selected high-volume excerpts and injected prompt blocks. Use this to tune bounded read/injection sizes without reopening any unbounded call paths.",
-      tags: ["performance"],
-    },
-    "agents.defaults.contextLimits.memoryGetMaxChars": {
-      label: "Default memory_get Max Chars",
-      help: "Default max characters returned by memory_get before truncation metadata and continuation notice are added. Increase to approximate older larger excerpts, but keep it bounded.",
-      tags: ["performance"],
-    },
-    "agents.defaults.contextLimits.memoryGetDefaultLines": {
-      label: "Default memory_get Line Window",
-      help: "Default memory_get line window used when requests omit lines. This controls how many source lines are selected before the max-char cap is applied.",
-      tags: ["performance"],
-    },
-    "agents.defaults.contextLimits.toolResultMaxChars": {
-      label: "Default Tool Result Max Chars",
-      help: "Default max characters kept for a single live tool result before truncation. This affects both persisted live tool-result writes and overflow-recovery truncation heuristics.",
-      tags: ["performance"],
-    },
-    "agents.defaults.contextLimits.postCompactionMaxChars": {
-      label: "Default Post-compaction Max Chars",
-      help: "Default max characters retained from AGENTS.md during post-compaction context refresh injection. Lower this to make compaction recovery cheaper, or raise it for agents that depend on longer startup guidance.",
-      tags: ["performance"],
-    },
-    "agents.defaults.embeddedHarness": {
-      label: "Default Embedded Harness",
-      help: "Default embedded agent harness policy. Use runtime=auto for plugin harness selection, runtime=pi for built-in PI, or a registered harness id such as codex.",
-      tags: ["advanced"],
-    },
-    "agents.defaults.embeddedHarness.runtime": {
-      label: "Default Embedded Harness Runtime",
-      help: "Embedded harness runtime: auto, pi, or a registered plugin harness id such as codex.",
-      tags: ["advanced"],
-    },
-    "agents.defaults.embeddedHarness.fallback": {
-      label: "Default Embedded Harness Fallback",
-      help: "Embedded harness fallback when no plugin harness matches. Selected plugin harness failures surface directly. Set none to disable automatic PI fallback.",
-      tags: ["reliability"],
-    },
     "agents.list": {
       label: "Agent List",
       help: "Explicit list of configured agents with IDs and optional overrides for model, tools, identity, and workspace. Keep IDs stable over time so bindings, approvals, and session routing remain deterministic.",
       tags: ["advanced"],
-    },
-    "agents.list[].skillsLimits": {
-      label: "Agent Skills Limits",
-      help: "Optional per-agent overrides for skills subsystem budgets. Use this when an agent needs a different skills prompt budget without introducing a second generic context-limits path.",
-      tags: ["performance"],
-    },
-    "agents.list[].skillsLimits.maxSkillsPromptChars": {
-      label: "Agent Skills Prompt Max Chars",
-      help: "Per-agent override for the skills prompt character budget. This extends the existing skills.limits.maxSkillsPromptChars path instead of routing the same budget through contextLimits.",
-      tags: ["performance"],
-    },
-    "agents.list[].contextLimits": {
-      label: "Agent Context Limits",
-      help: "Optional per-agent overrides for the focused context budget knobs. Omitted fields inherit agents.defaults.contextLimits.",
-      tags: ["performance"],
-    },
-    "agents.list[].contextLimits.memoryGetMaxChars": {
-      label: "Agent memory_get Max Chars",
-      help: "Per-agent override for the default memory_get max character budget.",
-      tags: ["performance"],
-    },
-    "agents.list[].contextLimits.memoryGetDefaultLines": {
-      label: "Agent memory_get Line Window",
-      help: "Per-agent override for the default memory_get line window when lines is omitted.",
-      tags: ["performance"],
-    },
-    "agents.list[].contextLimits.toolResultMaxChars": {
-      label: "Agent Tool Result Max Chars",
-      help: "Per-agent override for the live tool-result max character budget.",
-      tags: ["performance"],
-    },
-    "agents.list[].contextLimits.postCompactionMaxChars": {
-      label: "Agent Post-compaction Max Chars",
-      help: "Per-agent override for the post-compaction AGENTS.md excerpt budget.",
-      tags: ["performance"],
-    },
-    "agents.list.*.embeddedHarness": {
-      label: "Agent Embedded Harness",
-      help: "Per-agent embedded harness policy override. Use fallback=none to make missing plugin harness selection fail instead of falling back to PI.",
-      tags: ["advanced"],
-    },
-    "agents.list.*.embeddedHarness.runtime": {
-      label: "Agent Embedded Harness Runtime",
-      help: "Per-agent embedded harness runtime: auto, pi, or a registered plugin harness id such as codex.",
-      tags: ["advanced"],
-    },
-    "agents.list.*.embeddedHarness.fallback": {
-      label: "Agent Embedded Harness Fallback",
-      help: "Per-agent embedded harness fallback. Set none to disable automatic PI fallback for this agent.",
-      tags: ["reliability"],
     },
     "gateway.port": {
       label: "Gateway Port",
@@ -23620,7 +23193,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     },
     "gateway.channelStaleEventThresholdMinutes": {
       label: "Gateway Channel Stale Event Threshold (min)",
-      help: "How many minutes a connected channel can go without provider-proven transport activity before the health monitor treats it as a stale socket and triggers a restart. Default: 30.",
+      help: "How many minutes a connected channel can go without receiving any event before the health monitor treats it as a stale socket and triggers a restart. Default: 30.",
       tags: ["network"],
     },
     "gateway.channelMaxRestartsPerHour": {
@@ -23763,7 +23336,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     "browser.cdpUrl": {
       label: "Browser CDP URL",
       help: "Remote CDP websocket URL used to attach to an externally managed browser instance. Use this for centralized browser hosts and keep URL access restricted to trusted network paths.",
-      tags: ["advanced", "url-secret"],
+      tags: ["advanced"],
     },
     "browser.color": {
       label: "Browser Accent Color",
@@ -23813,16 +23386,16 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     "browser.profiles.*.cdpUrl": {
       label: "Browser Profile CDP URL",
       help: "Per-profile CDP websocket URL used for explicit remote browser routing by profile name. Use this when profile connections terminate on remote hosts or tunnels.",
-      tags: ["storage", "url-secret"],
+      tags: ["storage"],
     },
     "browser.profiles.*.userDataDir": {
       label: "Browser Profile User Data Dir",
-      help: "Per-profile Chromium user data directory for existing-session attachment through Chrome DevTools MCP. Use this for Brave, Edge, Chromium, or non-default Chrome profiles when the built-in auto-connect path would pick the wrong browser data directory on the selected host or browser node.",
+      help: "Per-profile Chromium user data directory for existing-session attachment through Chrome DevTools MCP. Use this for host-local Brave, Edge, Chromium, or non-default Chrome profiles when the built-in auto-connect path would pick the wrong browser data directory.",
       tags: ["storage"],
     },
     "browser.profiles.*.driver": {
       label: "Browser Profile Driver",
-      help: 'Per-profile browser driver mode. Use "openclaw" (or legacy "clawd") for CDP-based profiles, or use "existing-session" for Chrome DevTools MCP attachment on the selected host or browser node.',
+      help: 'Per-profile browser driver mode. Use "openclaw" (or legacy "clawd") for CDP-based profiles, or use "existing-session" for host-local Chrome DevTools MCP attachment.',
       tags: ["storage"],
     },
     "browser.profiles.*.attachOnly": {
@@ -24254,7 +23827,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     },
     "tools.experimental.planTool": {
       label: "Enable Structured Plan Tool",
-      help: "Enable the experimental structured `update_plan` tool for non-trivial multi-step work tracking. Leave this off unless you explicitly want the tool outside strict-agentic embedded Pi runs.",
+      help: "Enable or disable the experimental structured `update_plan` tool for non-trivial multi-step work tracking. OpenAI and OpenAI Codex runs auto-enable it when this flag is unset; set false to disable that auto-enable.",
       tags: ["security", "tools", "advanced"],
     },
     "tools.elevated": {
@@ -24599,16 +24172,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
       placeholder: "dist/control-ui",
       tags: ["network"],
     },
-    "gateway.controlUi.embedSandbox": {
-      label: "Control UI Embed Sandbox Mode",
-      help: 'Iframe sandbox policy for hosted Control UI embeds. "strict" disables scripts, "scripts" allows interactive embeds while keeping origin isolation (default), and "trusted" adds `allow-same-origin` for same-site documents that intentionally need stronger privileges.',
-      tags: ["security", "access", "advanced"],
-    },
-    "gateway.controlUi.allowExternalEmbedUrls": {
-      label: "Allow External Control UI Embed URLs",
-      help: "DANGEROUS toggle that allows hosted embeds to load absolute external http(s) URLs. Keep this off unless your Control UI intentionally embeds trusted third-party pages; hosted /__openclaw__/canvas and /__openclaw__/a2ui documents do not need it.",
-      tags: ["security", "access", "network", "advanced"],
-    },
     "gateway.controlUi.allowedOrigins": {
       label: "Control UI Allowed Origins",
       help: 'Allowed browser origins for Control UI/WebChat websocket connections (full origins only, e.g. https://control.example.com). Required for non-loopback Control UI deployments unless dangerous Host-header fallback is explicitly enabled. Setting ["*"] means allow any browser origin and should be avoided outside tightly controlled local testing.',
@@ -24622,7 +24185,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     },
     "gateway.controlUi.allowInsecureAuth": {
       label: "Insecure Control UI Auth Toggle",
-      help: "Loosens strict browser auth checks for Control UI when you must run a non-standard setup. Keep this off unless you trust your network and proxy path, because impersonation risk is higher.",
+      help: "Allows Control UI connections without device identity from localhost and private networks (LAN, Tailnet, link-local). Public internet connections still require HTTPS. Enable this for intranet access over plain HTTP.",
       tags: ["security", "access", "network", "advanced"],
     },
     "gateway.controlUi.dangerouslyDisableDeviceAuth": {
@@ -24828,7 +24391,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     },
     "bindings[].match.peer.kind": {
       label: "Binding Peer Kind",
-      help: 'Peer conversation type: "direct", "group", "channel", or legacy "dm" (deprecated alias for direct). Prefer "direct" for new configs and keep kind aligned with channel semantics.',
+      help: 'Peer conversation type: "direct", "group", "channel", "webhook" (e.g. external webhook sources like Paperclip), or legacy "dm" (deprecated alias for direct). Prefer "direct" for new configs and keep kind aligned with channel semantics.',
       tags: ["advanced"],
     },
     "bindings[].match.peer.id": {
@@ -24901,6 +24464,16 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
       help: "Debounce window in milliseconds for coalescing rapid skill file changes before reload logic runs. Increase to reduce reload churn on frequent writes, or lower for faster edit feedback.",
       tags: ["performance", "automation"],
     },
+    "skills.limits.maxSkillsPromptChars": {
+      label: "Max Skills Prompt Characters",
+      help: "Maximum total characters for the skills block in the system prompt (default 30000). If the combined name+description+location for the selected skills exceeds this, only as many skills as fit are included; the agent then sees fewer than the allowlist. Increase (e.g. 50000) when an agent has many or long-description skills so all selected skills appear.",
+      tags: ["performance"],
+    },
+    "skills.limits.maxSkillsInPrompt": {
+      label: "Max Skills in Prompt",
+      help: "Maximum number of skills included in the prompt (default 150). Applied before the character limit; rarely needs changing.",
+      tags: ["performance"],
+    },
     "agents.defaults.skills": {
       label: "Skills",
       help: "Optional default skill allowlist inherited by agents that omit agents.list[].skills. Omit for unrestricted skills, set [] to give inheriting agents no skills, and remember explicit agents.list[].skills replaces this default instead of merging with it.",
@@ -24916,21 +24489,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
       help: "Optional repository root shown in the system prompt runtime line (overrides auto-detect).",
       tags: ["advanced"],
     },
-    "agents.defaults.promptOverlays": {
-      label: "Prompt Overlays",
-      help: "Provider-independent prompt overlays applied by model family before provider-specific prompt hooks.",
-      tags: ["advanced"],
-    },
-    "agents.defaults.promptOverlays.gpt5": {
-      label: "GPT-5 Prompt Overlay",
-      help: "Shared GPT-5-family prompt overlay applied to matching model ids across providers such as OpenAI, OpenRouter, OpenCode, Codex, and compatible gateways.",
-      tags: ["advanced"],
-    },
-    "agents.defaults.promptOverlays.gpt5.personality": {
-      label: "GPT-5 Personality Overlay",
-      help: 'Friendly interaction-style layer for GPT-5-family models ("friendly" or "on" enables it; "off" disables only that layer). The tagged behavior contract remains enabled for matching GPT-5 models.',
-      tags: ["advanced"],
-    },
     "agents.defaults.contextInjection": {
       label: "Context Injection",
       help: 'Controls when workspace bootstrap files are injected into the system prompt: "always" (default) or "continuation-skip" for safe continuation turns after a completed assistant response.',
@@ -24938,63 +24496,23 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     },
     "agents.defaults.bootstrapMaxChars": {
       label: "Bootstrap Max Chars",
-      help: "Max characters of each workspace bootstrap file injected into the system prompt before truncation (default: 12000).",
+      help: "Max characters of each workspace bootstrap file injected into the system prompt before truncation (default: 20000).",
       tags: ["performance"],
     },
     "agents.defaults.bootstrapTotalMaxChars": {
       label: "Bootstrap Total Max Chars",
-      help: "Max total characters across all injected workspace bootstrap files (default: 60000).",
+      help: "Max total characters across all injected workspace bootstrap files (default: 150000).",
       tags: ["performance"],
     },
-    "agents.defaults.experimental": {
-      label: "Experimental Agent Flags",
-      help: "Experimental agent-default flags. Keep these off unless you are intentionally testing a preview surface.",
-      tags: ["security", "advanced"],
-    },
-    "agents.defaults.experimental.localModelLean": {
-      label: "Enable Lean Local Model Mode (Experimental)",
-      help: "Experimental local-model prompt trim. When enabled, OpenClaw drops heavyweight default tools like browser, cron, and message for weaker or smaller local-model backends.",
-      tags: ["security", "advanced"],
+    "agents.defaults.localModelMode": {
+      label: "Local Model Mode",
+      help: 'Local-model prompt profile: "default" keeps the standard tool surface, while "lean" drops heavyweight non-essential tools for smaller or weaker models.',
+      tags: ["advanced"],
     },
     "agents.defaults.bootstrapPromptTruncationWarning": {
       label: "Bootstrap Prompt Truncation Warning",
       help: 'Inject agent-visible warning text when bootstrap files are truncated: "off", "once" (default), or "always".',
       tags: ["advanced"],
-    },
-    "agents.defaults.startupContext": {
-      label: "Startup Context",
-      help: 'Runtime-owned first-turn prelude for bare "/new" and "/reset". Use this to control whether recent daily memory files are preloaded into the first prompt instead of asking the model to decide what to read.',
-      tags: ["advanced"],
-    },
-    "agents.defaults.startupContext.enabled": {
-      label: "Enable Startup Context",
-      help: "Enable the startup-context prelude for bare session resets (default: true). Disable this to fall back to prompt-only behavior with no runtime-loaded daily memory.",
-      tags: ["advanced"],
-    },
-    "agents.defaults.startupContext.applyOn": {
-      label: "Startup Context Apply On",
-      help: 'Chooses which bare reset commands get startup context: include "new", "reset", or both (default: ["new","reset"]).',
-      tags: ["advanced"],
-    },
-    "agents.defaults.startupContext.dailyMemoryDays": {
-      label: "Startup Context Daily Memory Days",
-      help: "Number of dated memory files to load counting backward from today in the configured user timezone (default: 2 for today + yesterday).",
-      tags: ["advanced"],
-    },
-    "agents.defaults.startupContext.maxFileBytes": {
-      label: "Startup Context Max File Bytes",
-      help: "Maximum bytes allowed per daily memory file when building startup context (default: 16384). Files over this boundary-safe read limit are skipped.",
-      tags: ["performance", "storage"],
-    },
-    "agents.defaults.startupContext.maxFileChars": {
-      label: "Startup Context Max File Chars",
-      help: "Maximum characters retained from each loaded daily memory file in the startup prelude (default: 1200).",
-      tags: ["performance", "storage"],
-    },
-    "agents.defaults.startupContext.maxTotalChars": {
-      label: "Startup Context Max Total Chars",
-      help: "Maximum total characters retained across all loaded daily memory files in the startup prelude (default: 2800). Additional files are truncated from the prelude once this cap is reached.",
-      tags: ["performance"],
     },
     "agents.defaults.envelopeTimezone": {
       label: "Envelope Timezone",
@@ -25965,7 +25483,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     },
     "agents.defaults.compaction.notifyUser": {
       label: "Compaction Notify User",
-      help: "When enabled, sends brief compaction notices to the user when compaction starts and when it completes (for example, '🧹 Compacting context...' and '🧹 Compaction complete'). Disabled by default to keep compaction silent and non-intrusive.",
+      help: "When enabled, sends a brief compaction notice to the user (e.g. '🧹 Compacting context...') when compaction starts. Disabled by default to keep compaction silent and non-intrusive.",
       tags: ["advanced"],
     },
     "agents.defaults.compaction.memoryFlush": {
@@ -26008,11 +25526,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
       help: 'How embedded Pi handles workspace-local `.pi/config/settings.json`: "sanitize" (default) strips shellPath/shellCommandPrefix, "ignore" disables project settings entirely, and "trusted" applies project settings as-is.',
       tags: ["access"],
     },
-    "agents.defaults.embeddedPi.executionContract": {
-      label: "Embedded Pi Execution Contract",
-      help: 'Embedded Pi execution contract: "default" keeps the standard runner behavior, while "strict-agentic" keeps OpenAI/OpenAI Codex GPT-5-family runs acting until they hit a real blocker instead of stopping at plans or filler.',
-      tags: ["advanced"],
-    },
     "agents.defaults.heartbeat.includeSystemPromptSection": {
       label: "Heartbeat Include System Prompt Section",
       help: "Includes the default agent's ## Heartbeats system prompt section when true. Turn this off to keep heartbeat runtime behavior while omitting the heartbeat prompt instructions from the agent system prompt.",
@@ -26022,16 +25535,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
       label: "Heartbeat Include System Prompt Section",
       help: "Per-agent override for whether the default agent's ## Heartbeats system prompt section is injected. Use false to keep heartbeat runtime behavior but omit the heartbeat prompt instructions from that agent's system prompt.",
       tags: ["automation"],
-    },
-    "agents.list[].embeddedPi": {
-      label: "Agent Embedded Pi",
-      help: "Optional per-agent embedded Pi overrides. Use this to opt specific agents into stricter GPT-5 execution behavior without changing the global default.",
-      tags: ["advanced"],
-    },
-    "agents.list[].embeddedPi.executionContract": {
-      label: "Agent Embedded Pi Execution Contract",
-      help: 'Optional per-agent embedded Pi execution contract override. Set "strict-agentic" to keep that agent acting through plan-only turns on OpenAI/OpenAI Codex GPT-5-family runs, or "default" to inherit the standard runner behavior.',
-      tags: ["advanced"],
     },
     "agents.defaults.heartbeat.directPolicy": {
       label: "Heartbeat Direct Policy",
@@ -26047,19 +25550,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
       label: "Heartbeat Suppress Tool Error Warnings",
       help: "Suppress tool error warning payloads during heartbeat runs.",
       tags: ["automation"],
-    },
-    "agents.list.*.heartbeat.suppressToolErrorWarnings": {
-      label: "Heartbeat Suppress Tool Error Warnings",
-      tags: ["automation"],
-    },
-    "agents.defaults.heartbeat.timeoutSeconds": {
-      label: "Heartbeat Timeout (Seconds)",
-      help: "Maximum time in seconds allowed for a heartbeat agent turn before it is aborted. Leave unset to use agents.defaults.timeoutSeconds.",
-      tags: ["performance", "automation"],
-    },
-    "agents.list.*.heartbeat.timeoutSeconds": {
-      label: "Heartbeat Timeout (Seconds)",
-      tags: ["performance", "automation"],
     },
     "agents.defaults.sandbox.browser.network": {
       label: "Sandbox Browser Network",
@@ -26089,11 +25579,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     "commands.text": {
       label: "Text Commands",
       help: "Enables text-command parsing in chat input in addition to native command surfaces where available. Keep this enabled for compatibility across channels that do not support native command registration.",
-      tags: ["advanced"],
-    },
-    "commands.modelsWrite": {
-      label: "Allow /models writes",
-      help: "Allow model-management write commands such as `/models add` to register provider/model entries directly into config and make them available without restarting the gateway (default: true).",
       tags: ["advanced"],
     },
     "commands.bash": {
@@ -26209,7 +25694,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     },
     "browser.ssrfPolicy.dangerouslyAllowPrivateNetwork": {
       label: "Browser Dangerously Allow Private Network",
-      help: "Allows access to private-network address ranges from browser tooling. Default is disabled when unset; enable only for explicitly trusted private-network destinations.",
+      help: "Allows access to private-network address ranges from browser tooling. Default is enabled for trusted-network operator setups; disable to enforce strict public-only resolution checks.",
       tags: ["security", "access", "advanced"],
     },
     "browser.ssrfPolicy.allowedHostnames": {
@@ -27129,11 +26614,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
       help: "Suppress tool error warning payloads during heartbeat runs.",
       tags: ["automation"],
     },
-    "agents.list[].heartbeat.timeoutSeconds": {
-      label: "Agent Heartbeat Timeout (Seconds)",
-      help: "Per-agent maximum time in seconds allowed for a heartbeat agent turn before it is aborted. Leave unset to inherit the merged heartbeat/default agent timeout.",
-      tags: ["performance", "automation"],
-    },
     "agents.list[].sandbox.browser.network": {
       label: "Agent Sandbox Browser Network",
       help: "Per-agent override for sandbox browser Docker network.",
@@ -27676,9 +27156,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
       sensitive: true,
       tags: ["security", "auth"],
     },
-    "models.providers.*.models[].baseUrl": {
-      tags: ["models", "url-secret"],
-    },
     "agents.list[].memorySearch.remote.baseUrl": {
       tags: ["advanced", "url-secret"],
     },
@@ -27728,6 +27205,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
       tags: ["advanced", "url-secret"],
     },
   },
-  version: "2026.4.23",
+  version: "2026.4.14",
   generatedAt: "2026-03-22T21:17:33.302Z",
 };

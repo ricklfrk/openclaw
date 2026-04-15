@@ -186,6 +186,7 @@ export async function executePluginCommand(params: {
   accountId?: PluginCommandContext["accountId"];
   messageThreadId?: PluginCommandContext["messageThreadId"];
   threadParentId?: PluginCommandContext["threadParentId"];
+  agentId?: string;
 }): Promise<PluginCommandResult> {
   const { command, args, senderId, channel, isAuthorizedSender, commandBody, config } = params;
 
@@ -229,6 +230,7 @@ export async function executePluginCommand(params: {
     accountId: effectiveAccountId,
     messageThreadId: params.messageThreadId,
     threadParentId: params.threadParentId,
+    agentId: params.agentId,
     requestConversationBinding: async (bindingParams) => {
       if (!command.pluginRoot || !bindingConversation) {
         return {

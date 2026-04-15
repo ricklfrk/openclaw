@@ -1291,7 +1291,10 @@ export async function runReplyAgent(params: {
       attempts: fallbackAttempts,
       state: fallbackStateEntry,
     });
-    if (fallbackTransition.stateChanged) {
+    // Heartbeat runs share the main session by default; persisting fallback
+    // notice state from a heartbeat would mislead status surfaces into showing
+    // the heartbeat's transient fallback as the user's active model state.
+    if (fallbackTransition.stateChanged && !isHeartbeat) {
       if (fallbackStateEntry) {
         fallbackStateEntry.fallbackNoticeSelectedModel = fallbackTransition.nextState.selectedModel;
         fallbackStateEntry.fallbackNoticeActiveModel = fallbackTransition.nextState.activeModel;

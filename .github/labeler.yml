@@ -217,6 +217,10 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/diagnostics-otel/**"
+"extensions: idle-reminder":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/idle-reminder/**"
 "extensions: llm-task":
   - changed-files:
       - any-glob-to-any-file:

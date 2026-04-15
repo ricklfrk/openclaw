@@ -121,6 +121,7 @@ export function resolveEffectiveRuntimeModel(params: {
   provider: string;
   modelId: string;
   runtimeModel: ProviderRuntimeModel;
+  agentId?: string;
 }): {
   ctxInfo: ContextWindowInfo;
   effectiveModel: ProviderRuntimeModel;
@@ -132,6 +133,7 @@ export function resolveEffectiveRuntimeModel(params: {
     modelContextTokens: readPiModelContextTokens(params.runtimeModel),
     modelContextWindow: params.runtimeModel.contextWindow,
     defaultTokens: DEFAULT_CONTEXT_TOKENS,
+    agentId: params.agentId,
   });
 
   // Apply contextTokens cap to model so pi-coding-agent's auto-compaction

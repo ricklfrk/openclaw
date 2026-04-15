@@ -46,6 +46,11 @@ function parseInlineCodeSpans(
   let open = initialState.open;
   let ticks = initialState.ticks;
   let openStart = open ? 0 : -1;
+  // Track whether the open span was carried over from a previous chunk.
+  // Only carried-over spans should extend to the end of text (streaming continuity).
+  // New backticks found during parsing that don't close are just literal characters
+  // per CommonMark (e.g. emoticons like (つ´ω`)つ).
+  let openFromPreviousChunk = initialState.open;
 
   let i = 0;
   while (i < text.length) {
@@ -71,6 +76,7 @@ function parseInlineCodeSpans(
       open = true;
       ticks = runLength;
       openStart = runStart;
+      openFromPreviousChunk = false;
       continue;
     }
 
@@ -79,10 +85,14 @@ function parseInlineCodeSpans(
       open = false;
       ticks = 0;
       openStart = -1;
+      openFromPreviousChunk = false;
     }
   }
 
-  if (open) {
+  // Only extend unclosed spans to the end if they were carried over from a
+  // previous chunk (streaming). Spans opened in this text that never closed
+  // are just unpaired backticks (literal text), not code spans.
+  if (open && openFromPreviousChunk) {
     spans.push([openStart, text.length]);
   }
 

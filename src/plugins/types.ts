@@ -1715,6 +1715,8 @@ export type PluginCommandContext = {
   messageThreadId?: string | number;
   /** Parent conversation id for thread-capable channels */
   threadParentId?: string;
+  /** Agent id for the session this command was received in */
+  agentId?: string;
   requestConversationBinding: (
     params?: PluginConversationBindingRequestParams,
   ) => Promise<PluginConversationBindingRequestResult>;

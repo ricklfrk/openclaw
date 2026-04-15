@@ -13,7 +13,7 @@ import { runCliAgent } from "../../agents/cli-runner.js";
 import { getCliSessionBinding } from "../../agents/cli-session.js";
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
 import { runWithModelFallback, isFallbackSummaryError } from "../../agents/model-fallback.js";
-import { isCliProvider } from "../../agents/model-selection.js";
+import { isCliProvider, resolveDefaultModelForAgent } from "../../agents/model-selection.js";
 import {
   BILLING_ERROR_USER_MESSAGE,
   isCompactionFailureError,
@@ -65,6 +65,7 @@ import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import { resolveRunAuthProfile } from "./agent-runner-auth-profile.js";
 import {
   buildEmbeddedRunExecutionParams,
+  resolveFallbackRetryPrompt,
   resolveQueuedReplyRuntimeConfig,
   resolveModelFallbackOptions,
 } from "./agent-runner-utils.js";
@@ -689,6 +690,7 @@ export async function runAgentTurnWithFallback(params: {
     model: string,
   ): Promise<(() => Promise<void>) | undefined> => {
     if (
+      params.isHeartbeat ||
       !params.sessionKey ||
       !params.activeSessionStore ||
       (provider === params.followupRun.run.provider && model === params.followupRun.run.model)
@@ -855,10 +857,30 @@ export async function runAgentTurnWithFallback(params: {
           })
         : undefined;
       const onToolResult = params.opts?.onToolResult;
+      let fallbackAttemptIndex = 0;
+      const baseFallbackOpts = resolveModelFallbackOptions(params.followupRun.run);
+      // Heartbeat runs use a dedicated model (e.g. gcli); on failure, fall back
+      // to primary → normal fallbacks, same chain as a regular user turn.
+      const heartbeatFallbacksOverride = params.isHeartbeat
+        ? (() => {
+            const primary = resolveDefaultModelForAgent({
+              cfg: params.followupRun.run.config,
+              agentId: params.followupRun.run.agentId,
+            });
+            const primaryRef = `${primary.provider}/${primary.model}`;
+            const normalFallbacks = baseFallbackOpts.fallbacksOverride ?? [];
+            return [primaryRef, ...normalFallbacks.filter((f) => f !== primaryRef)];
+          })()
+        : undefined;
       const fallbackResult = await runWithModelFallback({
-        ...resolveModelFallbackOptions(params.followupRun.run),
+        ...baseFallbackOpts,
+        ...(heartbeatFallbacksOverride
+          ? { fallbacksOverride: heartbeatFallbacksOverride }
+          : undefined),
         runId,
         run: async (provider, model, runOptions) => {
+          const isFallbackRetry = fallbackAttemptIndex > 0;
+          fallbackAttemptIndex += 1;
           // Notify that model selection is complete (including after fallback).
           // This allows responsePrefix template interpolation with the actual model.
           params.opts?.onModelSelected?.({
@@ -1033,8 +1055,17 @@ export async function runAgentTurnWithFallback(params: {
                 ...senderContext,
                 ...runBaseParams,
                 sandboxSessionKey: params.runtimePolicySessionKey,
-                prompt: params.commandBody,
+                prompt: resolveFallbackRetryPrompt({
+                  body: params.commandBody,
+                  isFallbackRetry,
+                }),
                 extraSystemPrompt: params.followupRun.run.extraSystemPrompt,
+                inputProvenance: isFallbackRetry
+                  ? {
+                      kind: "internal_system",
+                      sourceTool: "model_fallback",
+                    }
+                  : undefined,
                 toolResultFormat: (() => {
                   const channel = resolveMessageChannel(
                     params.sessionCtx.Surface,

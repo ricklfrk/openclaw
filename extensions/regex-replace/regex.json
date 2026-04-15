@@ -1,0 +1,22 @@
+[
+  {
+    "pattern": "<disclaimer>[\\s\\S]*?</disclaimer>",
+    "flags": "gm",
+    "replacement": ""
+  },
+  {
+    "pattern": "\\[AI_SYSTEM[\\s\\S]*?or liability\\]",
+    "flags": "gm",
+    "replacement": ""
+  },
+  {
+    "pattern": "Tagged Sections \\(TARGET_CONTENT\\)[\\s\\S]*?or liability\\]",
+    "flags": "gm",
+    "replacement": ""
+  },
+  {
+    "pattern": "example_name",
+    "flags": "gi",
+    "replacement": "user"
+  }
+]

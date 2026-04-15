@@ -16,6 +16,7 @@ import { loadConfig } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { GATEWAY_CLIENT_IDS, GATEWAY_CLIENT_MODES } from "../../gateway/protocol/client-info.js";
 import { getToolResult, runMessageAction } from "../../infra/outbound/message-action-runner.js";
+import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { POLL_CREATION_PARAM_DEFS, SHARED_POLL_CREATION_PARAM_NAMES } from "../../poll-params.js";
 import { normalizeAccountId } from "../../routing/session-key.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
@@ -713,6 +714,61 @@ export function createMessageTool(options?: MessageToolOptions): AnyAgentTool {
         if (typeof params[field] === "string") {
           params[field] = stripReasoningTagsFromText(params[field]);
         }
+      }
+
+      // Run message_sending plugin hooks on text fields so plugins (e.g. regex-replace)
+      // can transform content before delivery. The standard auto-reply path runs this
+      // inside deliverOutboundPayloads, but the messaging tool path bypasses that.
+      const hookRunner = getGlobalHookRunner();
+      if (hookRunner?.hasHooks("message_sending")) {
+        const targetChannel =
+          typeof params.channel === "string" ? params.channel : options?.currentChannelProvider;
+        const targetTo =
+          typeof params.target === "string"
+            ? params.target
+            : (params.targets as string[] | undefined)?.[0];
+        const hookCtx = {
+          channelId: targetChannel ?? "",
+          accountId: typeof params.accountId === "string" ? params.accountId : undefined,
+        };
+        for (const field of ["text", "content", "message", "caption"]) {
+          if (typeof params[field] === "string" && params[field]) {
+            const hookResult = await hookRunner
+              .runMessageSending(
+                {
+                  to: targetTo ?? targetChannel ?? "",
+                  content: params[field],
+                  metadata: { channel: targetChannel },
+                },
+                hookCtx,
+              )
+              .catch(() => undefined);
+            if (hookResult?.content != null) {
+              params[field] = hookResult.content;
+            }
+          }
+        }
+      }
+
+      // Suppress HEARTBEAT_OK / NO_REPLY sends — models sometimes use the
+      // message tool to "reply" with ack tokens instead of returning them as
+      // plain text. Sending these tokens through a channel bypasses heartbeat
+      // stripping and leaks internal tokens to the user.
+      const msgBody = (
+        typeof params.message === "string"
+          ? params.message
+          : typeof params.text === "string"
+            ? params.text
+            : ""
+      ).trim();
+      const actionRaw = readStringParam({ ...(args as Record<string, unknown>) }, "action", {
+        required: false,
+      });
+      if (actionRaw === "send" && (msgBody === "HEARTBEAT_OK" || msgBody === "NO_REPLY")) {
+        return {
+          content: [{ type: "text" as const, text: msgBody }],
+          details: [],
+        };
       }
 
       const action = readStringParam(params, "action", {

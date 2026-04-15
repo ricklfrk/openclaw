@@ -196,8 +196,12 @@ export async function getReplyFromConfig(
   });
   let provider = defaultProvider;
   let model = defaultModel;
-  let hasResolvedHeartbeatModelOverride = false;
-  if (opts?.isHeartbeat) {
+  // heartbeatUsePrimaryModel uses the default primary model but must still
+  // skip session-stored model overrides (a cron run could have persisted a
+  // CLI-backend override that would lose all transcript context).
+  let hasResolvedHeartbeatModelOverride =
+    Boolean(opts?.isHeartbeat) && opts?.heartbeatUsePrimaryModel === true;
+  if (opts?.isHeartbeat && !opts?.heartbeatUsePrimaryModel) {
     // Prefer the resolved per-agent heartbeat model passed from the heartbeat runner,
     // fall back to the global defaults heartbeat model for backward compatibility.
     const heartbeatRaw =

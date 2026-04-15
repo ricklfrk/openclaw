@@ -63,6 +63,7 @@ import { ADMIN_SCOPE } from "../../method-scopes.js";
 import {
   isLocalishHost,
   isLoopbackAddress,
+  isPrivateOrLoopbackAddress,
   isTrustedProxyAddress,
   resolveClientIp,
 } from "../../net.js";
@@ -273,6 +274,23 @@ export function attachGatewayWsMessageHandler(params: {
   const hasUntrustedProxyHeaders = hasProxyHeaders && !remoteIsTrustedProxy;
   const hostIsLocalish = isLocalishHost(requestHost);
   const isLocalClient = isLocalDirectRequest(upgradeReq, trustedProxies, allowRealIpFallback);
+  const isPrivateNetworkClient = isPrivateOrLoopbackAddress(clientIp);
+
+  // Parse ?agent= from the WebSocket upgrade URL for default agent routing.
+  let defaultAgentIdFromUrl: string | undefined;
+  try {
+    const reqUrl = upgradeReq.url;
+    if (reqUrl) {
+      const parsed = new URL(reqUrl, "http://localhost");
+      const agentParam = parsed.searchParams.get("agent");
+      if (agentParam) {
+        defaultAgentIdFromUrl = agentParam;
+      }
+    }
+  } catch {
+    // Malformed URL — ignore
+  }
+
   const reportedClientIp =
     isLocalClient || hasUntrustedProxyHeaders
       ? undefined
@@ -628,6 +646,7 @@ export function attachGatewayWsMessageHandler(params: {
             authOk,
             hasSharedAuth,
             isLocalClient,
+            isPrivateNetworkClient,
           });
           // Shared token/password auth can bypass pairing for trusted operators.
           // Device-less clients still clear self-declared scopes by default, with
@@ -652,7 +671,7 @@ export function attachGatewayWsMessageHandler(params: {
 
           if (decision.kind === "reject-control-ui-insecure-auth") {
             const errorMessage =
-              "control ui requires device identity (use HTTPS or localhost secure context)";
+              "control ui requires device identity (use HTTPS, localhost, or enable allowInsecureAuth for private network access)";
             markHandshakeFailure("control-ui-insecure-auth", {
               insecureAuthConfigured: controlUiAuthPolicy.allowInsecureAuthConfigured,
             });
@@ -1318,6 +1337,7 @@ export function attachGatewayWsMessageHandler(params: {
           canvasHostUrl,
           canvasCapability,
           canvasCapabilityExpiresAtMs,
+          defaultAgentIdFromUrl,
         };
         setSocketMaxPayload(socket, MAX_PAYLOAD_BYTES);
         setClient(nextClient);

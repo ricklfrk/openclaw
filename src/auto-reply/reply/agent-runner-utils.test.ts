@@ -25,6 +25,7 @@ const {
   buildThreadingToolContext,
   buildEmbeddedRunBaseParams,
   buildEmbeddedRunContexts,
+  resolveFallbackRetryPrompt,
   resolveModelFallbackOptions,
   resolveEnforceFinalTag,
   resolveProviderScopedAuthProfile,
@@ -182,6 +183,21 @@ describe("agent-runner-utils", () => {
       senderUsername: undefined,
       senderE164: undefined,
     });
+  });
+
+  it("uses a continuation prompt for fallback retries", () => {
+    expect(
+      resolveFallbackRetryPrompt({
+        body: "original prompt",
+        isFallbackRetry: false,
+      }),
+    ).toBe("original prompt");
+    expect(
+      resolveFallbackRetryPrompt({
+        body: "original prompt",
+        isFallbackRetry: true,
+      }),
+    ).toBe("Continue where you left off. The previous model attempt failed or timed out.");
   });
 
   it("prefers OriginatingChannel over Provider for messageProvider", () => {

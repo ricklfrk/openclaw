@@ -48,13 +48,11 @@ import { isAnnounceSkip } from "./tools/sessions-send-tokens.js";
 type SubagentAnnounceDeps = {
   callGateway: typeof callGateway;
   loadConfig: typeof loadConfig;
-  loadSubagentRegistryRuntime: typeof loadSubagentRegistryRuntime;
 };
 
 const defaultSubagentAnnounceDeps: SubagentAnnounceDeps = {
   callGateway,
   loadConfig,
-  loadSubagentRegistryRuntime,
 };
 
 let subagentAnnounceDeps: SubagentAnnounceDeps = defaultSubagentAnnounceDeps;
@@ -299,7 +297,7 @@ export async function runSubagentAnnounceFlow(params: {
       | Awaited<ReturnType<typeof loadSubagentRegistryRuntime>>
       | undefined;
     try {
-      subagentRegistryRuntime = await subagentAnnounceDeps.loadSubagentRegistryRuntime();
+      subagentRegistryRuntime = await loadSubagentRegistryRuntime();
       if (
         requesterDepth >= 1 &&
         subagentRegistryRuntime.shouldIgnorePostCompletionAnnounceForSession(

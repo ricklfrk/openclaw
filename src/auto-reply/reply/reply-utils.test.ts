@@ -208,6 +208,34 @@ describe("normalizeReplyPayload", () => {
     expect(result!.mediaUrl).toBe("https://example.com/img.png");
   });
 
+  it("suppresses ANNOUNCE_SKIP control token", () => {
+    const reasons: string[] = [];
+    const result = normalizeReplyPayload(
+      { text: "ANNOUNCE_SKIP" },
+      { onSkip: (reason) => reasons.push(reason) },
+    );
+    expect(result).toBeNull();
+    expect(reasons).toEqual(["control-token"]);
+  });
+
+  it("suppresses REPLY_SKIP control token", () => {
+    const reasons: string[] = [];
+    const result = normalizeReplyPayload(
+      { text: "  REPLY_SKIP  " },
+      { onSkip: (reason) => reasons.push(reason) },
+    );
+    expect(result).toBeNull();
+    expect(reasons).toEqual(["control-token"]);
+  });
+
+  it("does not suppress text that merely contains ANNOUNCE_SKIP", () => {
+    const result = normalizeReplyPayload({
+      text: "I will ANNOUNCE_SKIP this for now and move on.",
+    });
+    expect(result).not.toBeNull();
+    expect(result!.text).toContain("ANNOUNCE_SKIP");
+  });
+
   it("does not compile Slack directives unless interactive replies are enabled", () => {
     const result = normalizeReplyPayload({
       text: "hello [[slack_buttons: Retry:retry, Ignore:ignore]]",

@@ -24,7 +24,7 @@ import type { EmbeddedRunAttemptParams } from "./types.js";
 export type PromptBuildHookRunner = {
   hasHooks: (hookName: "before_prompt_build" | "before_agent_start") => boolean;
   runBeforePromptBuild: (
-    event: { prompt: string; messages: unknown[] },
+    event: { prompt: string; messages: unknown[]; systemPrompt?: string },
     ctx: PluginHookAgentContext,
   ) => Promise<PluginHookBeforePromptBuildResult | undefined>;
   runBeforeAgentStart: (
@@ -36,16 +36,22 @@ export type PromptBuildHookRunner = {
 export async function resolvePromptBuildHookResult(params: {
   prompt: string;
   messages: unknown[];
+  systemPrompt?: string;
   hookCtx: PluginHookAgentContext;
   hookRunner?: PromptBuildHookRunner | null;
   legacyBeforeAgentStartResult?: PluginHookBeforeAgentStartResult;
 }): Promise<PluginHookBeforePromptBuildResult> {
-  const promptBuildResult = params.hookRunner?.hasHooks("before_prompt_build")
-    ? await params.hookRunner
-        .runBeforePromptBuild(
+  const hasBPB = params.hookRunner?.hasHooks("before_prompt_build") ?? false;
+  log.info(
+    `resolvePromptBuildHookResult: hasHooks(before_prompt_build)=${hasBPB}, hookRunner=${!!params.hookRunner}`,
+  );
+  const promptBuildResult = hasBPB
+    ? await params
+        .hookRunner!.runBeforePromptBuild(
           {
             prompt: params.prompt,
             messages: params.messages,
+            systemPrompt: params.systemPrompt,
           },
           params.hookCtx,
         )

@@ -19,6 +19,7 @@ function resolveContextWindowTokens(params: {
   provider: string;
   modelId: string;
   model: ProviderRuntimeModel | undefined;
+  agentId?: string;
 }): number {
   return resolveContextWindowInfo({
     cfg: params.cfg,
@@ -27,6 +28,7 @@ function resolveContextWindowTokens(params: {
     modelContextTokens: params.model?.contextTokens,
     modelContextWindow: params.model?.contextWindow,
     defaultTokens: DEFAULT_CONTEXT_TOKENS,
+    agentId: params.agentId,
   }).tokens;
 }
 
@@ -84,6 +86,7 @@ export function buildEmbeddedExtensionFactories(params: {
   provider: string;
   modelId: string;
   model: ProviderRuntimeModel | undefined;
+  agentId?: string;
 }): ExtensionFactory[] {
   const factories: ExtensionFactory[] = [];
   if (resolveCompactionMode(params.cfg) === "safeguard") {
@@ -96,6 +99,7 @@ export function buildEmbeddedExtensionFactories(params: {
       modelContextTokens: params.model?.contextTokens,
       modelContextWindow: params.model?.contextWindow,
       defaultTokens: DEFAULT_CONTEXT_TOKENS,
+      agentId: params.agentId,
     });
     setCompactionSafeguardRuntime(params.sessionManager, {
       maxHistoryShare: compactionCfg?.maxHistoryShare,

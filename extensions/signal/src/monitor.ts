@@ -8,6 +8,7 @@ import {
 } from "openclaw/plugin-sdk/config-runtime";
 import { waitForTransportReady } from "openclaw/plugin-sdk/infra-runtime";
 import { estimateBase64DecodedBytes, saveMediaBuffer } from "openclaw/plugin-sdk/media-runtime";
+import { getGlobalHookRunner } from "openclaw/plugin-sdk/plugin-runtime";
 import { DEFAULT_GROUP_HISTORY_LIMIT, type HistoryEntry } from "openclaw/plugin-sdk/reply-history";
 import {
   deliverTextOrMediaReply,
@@ -39,6 +40,7 @@ import type {
   SignalReactionMessage,
   SignalReactionTarget,
 } from "./monitor/event-handler.types.js";
+import { type SignalEnhancementDeps } from "./monitor/signal-enhancements.js";
 import { sendMessageSignal } from "./send.js";
 import { runSignalSseLoop } from "./sse-reconnect.js";
 
@@ -317,11 +319,38 @@ async function deliverReplies(params: {
 }) {
   const { replies, target, baseUrl, account, accountId, runtime, maxBytes, textLimit, chunkMode } =
     params;
+  const hookRunner = getGlobalHookRunner();
+  const hasMessageSendingHooks = hookRunner?.hasHooks("message_sending") ?? false;
   for (const payload of replies) {
     const reply = resolveSendableOutboundReplyParts(payload);
+
+    // Run message_sending plugin hooks so plugins (e.g. regex-replace) can
+    // transform content before delivery to the channel.
+    let effectiveText = reply.text;
+    if (hasMessageSendingHooks && effectiveText) {
+      try {
+        const hookResult = await hookRunner!.runMessageSending(
+          {
+            to: target,
+            content: effectiveText,
+            metadata: { channel: "signal", accountId },
+          },
+          { channelId: "signal", accountId: accountId ?? undefined },
+        );
+        if (hookResult?.cancel) {
+          continue;
+        }
+        if (hookResult?.content != null) {
+          effectiveText = hookResult.content;
+        }
+      } catch {
+        // Don't block delivery on hook failure.
+      }
+    }
+
     const delivered = await deliverTextOrMediaReply({
       payload,
-      text: reply.text,
+      text: effectiveText,
       chunkText: (value) => chunkTextWithMode(value, textLimit, chunkMode),
       sendText: async (chunk) => {
         await sendMessageSignal(target, chunk, {
@@ -446,6 +475,18 @@ export async function monitorSignalProvider(opts: MonitorSignalOpts = {}): Promi
       }
     }
 
+    // Signal enhancements: build enhancement deps
+    const enhancementDeps: SignalEnhancementDeps = {
+      cfg,
+      baseUrl,
+      account,
+      accountId: accountInfo.accountId,
+      mediaMaxBytes,
+      ignoreAttachments,
+      fetchAttachment,
+      groups: accountInfo.config.groups,
+    };
+
     const handleEvent = createSignalEventHandler({
       runtime,
       cfg,
@@ -473,6 +514,7 @@ export async function monitorSignalProvider(opts: MonitorSignalOpts = {}): Promi
       isSignalReactionMessage,
       shouldEmitSignalReactionNotification,
       buildSignalReactionSystemEventText,
+      enhancementDeps,
     });
 
     await runSignalSseLoop({

@@ -6,6 +6,7 @@ import {
   isSessionIdentityPending,
   resolveSessionIdentityFromMeta,
 } from "../../acp/runtime/session-identity.js";
+import { resolveDefaultModelForAgent } from "../../agents/model-selection.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { TtsAutoMode } from "../../config/types.tts.js";
 import { logVerbose } from "../../globals.js";
@@ -388,9 +389,14 @@ export async function tryDispatchAcpReply(params: {
     if (hasInboundMedia(params.ctx) && !params.ctx.MediaUnderstanding?.length) {
       try {
         const { applyMediaUnderstanding } = await loadDispatchAcpMediaRuntime();
+        const agentModel = resolveDefaultModelForAgent({
+          cfg: params.cfg,
+          agentId: resolvedAcpAgent,
+        });
         await applyMediaUnderstanding({
           ctx: params.ctx,
           cfg: params.cfg,
+          activeModel: { provider: agentModel.provider, model: agentModel.model },
         });
       } catch (err) {
         logVerbose(

@@ -124,6 +124,14 @@ export function createAnthropicBetaHeadersWrapper(
       );
     }
 
+    // When no effective extras, skip — let pi-ai handle base betas natively.
+    if (effectiveBetas.length === 0 && !isOauth) {
+      return underlying(model, context, options);
+    }
+
+    // pi-ai's createClient merges optionsHeaders via Object.assign, which
+    // replaces the built-in anthropic-beta value. Pick the right base set
+    // for the auth mode so OAuth betas survive the override.
     const piAiBetas = isOauth
       ? (PI_AI_OAUTH_ANTHROPIC_BETAS as readonly string[])
       : (PI_AI_DEFAULT_ANTHROPIC_BETAS as readonly string[]);

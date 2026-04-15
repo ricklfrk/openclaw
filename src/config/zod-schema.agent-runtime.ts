@@ -841,6 +841,7 @@ export const AgentEntrySchema = z
               .object({
                 primary: z.string().optional(),
                 fallbacks: z.array(z.string()).optional(),
+                compact: z.string().optional(),
               })
               .strict(),
           ])
@@ -856,6 +857,26 @@ export const AgentEntrySchema = z
       })
       .strict()
       .optional(),
+    retry: z
+      .object({
+        enabled: z.boolean().optional(),
+        maxRetries: z.number().int().nonnegative().optional(),
+        baseDelayMs: z.number().int().nonnegative().optional(),
+        maxDelayMs: z.number().int().nonnegative().optional(),
+      })
+      .strict()
+      .optional(),
+    compaction: z
+      .object({
+        mode: z.union([z.literal("default"), z.literal("safeguard")]).optional(),
+        provider: z.string().optional(),
+        reserveTokens: z.number().int().nonnegative().optional(),
+        keepRecentTokens: z.number().int().positive().optional(),
+        reserveTokensFloor: z.number().int().nonnegative().optional(),
+      })
+      .strict()
+      .optional(),
+    contextTokens: z.number().int().positive().optional(),
     sandbox: AgentSandboxSchema,
     params: z.record(z.string(), z.unknown()).optional(),
     tools: AgentToolsSchema,

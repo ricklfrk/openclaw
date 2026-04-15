@@ -156,6 +156,16 @@ export const formatBunFetchSocketError = (message: string) => {
   ].join("\n");
 };
 
+export function resolveFallbackRetryPrompt(params: {
+  body: string;
+  isFallbackRetry: boolean;
+}): string {
+  if (!params.isFallbackRetry) {
+    return params.body;
+  }
+  return "Continue where you left off. The previous model attempt failed or timed out.";
+}
+
 export const resolveEnforceFinalTag = (
   run: FollowupRun["run"],
   provider: string,

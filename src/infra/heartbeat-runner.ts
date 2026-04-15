@@ -12,6 +12,7 @@ import {
 } from "../agents/agent-scope.js";
 import { appendCronStyleCurrentTimeLine } from "../agents/current-time.js";
 import { resolveEffectiveMessagesConfig } from "../agents/identity.js";
+import { sanitizeUserFacingText } from "../agents/pi-embedded-helpers/sanitize-user-facing-text.js";
 import { resolveEmbeddedSessionLane } from "../agents/pi-embedded-runner/lanes.js";
 import { DEFAULT_HEARTBEAT_FILENAME } from "../agents/workspace.js";
 import { resolveHeartbeatReplyPayload } from "../auto-reply/heartbeat-reply-payload.js";
@@ -47,13 +48,16 @@ import {
 import type { AgentDefaultsConfig } from "../config/types.agent-defaults.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveCronSession } from "../cron/isolated-agent/session.js";
+import { isSuppressedControlReplyText } from "../gateway/control-reply-text.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getActivePluginChannelRegistry } from "../plugins/runtime.js";
 import { getQueueSize } from "../process/command-queue.js";
 import { CommandLane } from "../process/lanes.js";
 import {
+  buildAgentPeerSessionKey,
   isSubagentSessionKey,
   normalizeAgentId,
+  normalizeMainKey,
   parseAgentSessionKey,
   resolveAgentIdFromSessionKey,
   toAgentStoreSessionKey,
@@ -309,6 +313,29 @@ function resolveHeartbeatSession(
     }
   }
 
+  // When target is "last" and dmScope creates per-peer sessions, resolve the
+  // per-peer session key from the main entry's last delivery route so the
+  // heartbeat agent loads the correct conversation transcript.
+  if (heartbeat?.target === "last" && mainEntry) {
+    const dmScope = sessionCfg?.dmScope ?? "main";
+    if (dmScope !== "main" && mainEntry.lastChannel && mainEntry.lastTo) {
+      const peerSessionKey = buildAgentPeerSessionKey({
+        agentId: resolvedAgentId,
+        mainKey: normalizeMainKey(sessionCfg?.mainKey),
+        channel: mainEntry.lastChannel,
+        accountId: mainEntry.lastAccountId,
+        peerKind: "direct",
+        peerId: mainEntry.lastTo,
+        dmScope,
+        identityLinks: sessionCfg?.identityLinks,
+      });
+      const peerEntry = store[peerSessionKey];
+      if (peerEntry) {
+        return { sessionKey: peerSessionKey, storePath, store, entry: peerEntry };
+      }
+    }
+  }
+
   const trimmed = heartbeat?.session?.trim() ?? "";
   if (!trimmed || isSubagentSessionKey(trimmed)) {
     return {
@@ -513,6 +540,22 @@ function normalizeHeartbeatReply(
     };
   }
   let finalText = stripped.text;
+
+  // Suppress ANNOUNCE_SKIP / REPLY_SKIP / NO_REPLY control tokens that
+  // the model may emit in heartbeat responses.
+  if (finalText && isSuppressedControlReplyText(finalText)) {
+    return { shouldSkip: true, text: "", hasMedia };
+  }
+
+  // Strip internal model tags (<thinking>, <reflection>, etc.) so they
+  // never reach the end user in heartbeat messages.
+  if (finalText) {
+    finalText = sanitizeUserFacingText(finalText);
+  }
+  if (!finalText?.trim() && !hasMedia) {
+    return { shouldSkip: true, text: "", hasMedia };
+  }
+
   if (responsePrefix && finalText && !finalText.startsWith(responsePrefix)) {
     finalText = `${responsePrefix} ${finalText}`;
   }
@@ -1090,7 +1133,6 @@ export async function runHeartbeatOnce(opts: {
         sessionKey,
         updatedAt: previousUpdatedAt,
       });
-
       const okSent = await maybeSendHeartbeatOk();
       emitHeartbeatEvent({
         status: "ok-empty",
@@ -1127,7 +1169,6 @@ export async function runHeartbeatOnce(opts: {
         sessionKey,
         updatedAt: previousUpdatedAt,
       });
-
       const okSent = await maybeSendHeartbeatOk();
       emitHeartbeatEvent({
         status: "ok-token",
@@ -1249,6 +1290,14 @@ export async function runHeartbeatOnce(opts: {
       }
     }
 
+    // Sanitize reasoning payloads to strip internal model tags before delivery.
+    const sanitizedReasoningPayloads = reasoningPayloads
+      .map((rp) => ({
+        ...rp,
+        text: rp.text ? sanitizeUserFacingText(rp.text) : rp.text,
+      }))
+      .filter((rp) => rp.text?.trim());
+
     await deliverOutboundPayloads({
       cfg,
       channel: delivery.channel,
@@ -1257,7 +1306,7 @@ export async function runHeartbeatOnce(opts: {
       session: outboundSession,
       threadId: delivery.threadId,
       payloads: [
-        ...reasoningPayloads,
+        ...sanitizedReasoningPayloads,
         ...(shouldSkipMain
           ? []
           : [

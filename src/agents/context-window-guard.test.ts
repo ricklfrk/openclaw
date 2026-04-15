@@ -204,6 +204,80 @@ describe("context-window-guard", () => {
     expect(guard.shouldBlock).toBe(false);
   });
 
+  it("per-agent contextTokens caps below model window", () => {
+    const cfg = {
+      agents: {
+        defaults: {},
+        list: [{ id: "alice", contextTokens: 200_000 }],
+      },
+    } satisfies OpenClawConfig;
+    const info = resolveContextWindowInfo({
+      cfg,
+      provider: "anthropic",
+      modelId: "claude-opus-4-6",
+      modelContextWindow: 1_000_000,
+      defaultTokens: 1_000_000,
+      agentId: "alice",
+    });
+    expect(info.source).toBe("agentContextTokens");
+    expect(info.tokens).toBe(200_000);
+  });
+
+  it("per-agent contextTokens overrides global defaults cap", () => {
+    const cfg = {
+      agents: {
+        defaults: { contextTokens: 500_000 },
+        list: [{ id: "alice", contextTokens: 200_000 }],
+      },
+    } satisfies OpenClawConfig;
+    const info = resolveContextWindowInfo({
+      cfg,
+      provider: "anthropic",
+      modelId: "claude-opus-4-6",
+      modelContextWindow: 1_000_000,
+      defaultTokens: 1_000_000,
+      agentId: "alice",
+    });
+    expect(info.tokens).toBe(200_000);
+  });
+
+  it("agent without per-agent contextTokens falls back to global cap", () => {
+    const cfg = {
+      agents: {
+        defaults: { contextTokens: 500_000 },
+        list: [{ id: "alice", contextTokens: 200_000 }],
+      },
+    } satisfies OpenClawConfig;
+    const info = resolveContextWindowInfo({
+      cfg,
+      provider: "anthropic",
+      modelId: "claude-opus-4-6",
+      modelContextWindow: 1_000_000,
+      defaultTokens: 1_000_000,
+      agentId: "main",
+    });
+    expect(info.tokens).toBe(500_000);
+  });
+
+  it("no cap applied when agentId has no contextTokens and no global cap", () => {
+    const cfg = {
+      agents: {
+        defaults: {},
+        list: [{ id: "alice", contextTokens: 200_000 }],
+      },
+    } satisfies OpenClawConfig;
+    const info = resolveContextWindowInfo({
+      cfg,
+      provider: "anthropic",
+      modelId: "claude-opus-4-6",
+      modelContextWindow: 1_000_000,
+      defaultTokens: 1_000_000,
+      agentId: "main",
+    });
+    expect(info.source).toBe("model");
+    expect(info.tokens).toBe(1_000_000);
+  });
+
   it("exports thresholds as expected", () => {
     expect(CONTEXT_WINDOW_HARD_MIN_TOKENS).toBe(16_000);
     expect(CONTEXT_WINDOW_WARN_BELOW_TOKENS).toBe(32_000);
