@@ -10,7 +10,7 @@ import type { MessagingToolSend } from "../../pi-embedded-messaging.types.js";
 import type { ToolErrorSummary } from "../../tool-error-summary.js";
 import type { NormalizedUsage } from "../../usage.js";
 import type { EmbeddedRunReplayMetadata, EmbeddedRunReplayState } from "../replay-state.js";
-import type { KeyRotationState } from "../stream-key-rotation.js";
+import type { KeyRotationState } from "../stream-key-rotation.types.js";
 import type { EmbeddedRunLivenessState } from "../types.js";
 import type { RunEmbeddedPiAgentParams } from "./params.js";
 import type { PreemptiveCompactionRoute } from "./preemptive-compaction.types.js";

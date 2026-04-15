@@ -325,6 +325,68 @@ describe("applyPiCompactionSettingsFromConfig", () => {
 
     expect(result.compaction.reserveTokens).toBe(DEFAULT_PI_COMPACTION_RESERVE_TOKENS_FLOOR);
   });
+
+  it("re-applies per-agent overrides after a SettingsManager reload resets values", () => {
+    // Regression: Pi SDK's DefaultResourceLoader.reload() (triggered inside
+    // createAgentSession) rehydrates SettingsManager from on-disk settings
+    // files, which wipes out compaction/retry overrides applied earlier by
+    // createPreparedEmbeddedPiSettingsManager. Embedded runner must therefore
+    // re-apply settings from config after session creation. This test mirrors
+    // that sequence: first apply → reset → apply again, expecting the final
+    // state to match the configured per-agent override.
+    let currentReserveTokens = 16_384;
+    let currentKeepRecentTokens = 20_000;
+    const settingsManager = {
+      getCompactionReserveTokens: () => currentReserveTokens,
+      getCompactionKeepRecentTokens: () => currentKeepRecentTokens,
+      applyOverrides: vi.fn(
+        (patch: { compaction?: { reserveTokens?: number; keepRecentTokens?: number } }) => {
+          if (patch.compaction?.reserveTokens !== undefined) {
+            currentReserveTokens = patch.compaction.reserveTokens;
+          }
+          if (patch.compaction?.keepRecentTokens !== undefined) {
+            currentKeepRecentTokens = patch.compaction.keepRecentTokens;
+          }
+        },
+      ),
+    };
+
+    const cfg = {
+      agents: {
+        defaults: { compaction: { reserveTokens: 20_000, keepRecentTokens: 20_000 } },
+        list: [
+          {
+            id: "main",
+            compaction: { reserveTokens: 500_000, keepRecentTokens: 50_000 },
+          },
+        ],
+      },
+    };
+
+    const first = applyPiCompactionSettingsFromConfig({
+      settingsManager,
+      cfg,
+      contextTokenBudget: 1_000_000,
+      agentId: "main",
+    });
+    expect(first.didOverride).toBe(true);
+    expect(currentReserveTokens).toBe(500_000);
+    expect(currentKeepRecentTokens).toBe(50_000);
+
+    // Simulate DefaultResourceLoader.reload() resetting SDK defaults.
+    currentReserveTokens = 16_384;
+    currentKeepRecentTokens = 20_000;
+
+    const second = applyPiCompactionSettingsFromConfig({
+      settingsManager,
+      cfg,
+      contextTokenBudget: 1_000_000,
+      agentId: "main",
+    });
+    expect(second.didOverride).toBe(true);
+    expect(currentReserveTokens).toBe(500_000);
+    expect(currentKeepRecentTokens).toBe(50_000);
+  });
 });
 
 describe("resolveCompactionReserveTokensFloor", () => {

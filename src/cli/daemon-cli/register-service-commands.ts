@@ -4,7 +4,7 @@ import type { DaemonInstallOptions, GatewayRpcOpts } from "./types.js";
 
 let daemonInstallModulePromise: Promise<typeof import("./install.runtime.js")> | undefined;
 let daemonLifecycleModulePromise: Promise<typeof import("./lifecycle.runtime.js")> | undefined;
-let daemonStatusModulePromise: Promise<typeof import("./status.runtime.js")> | undefined;
+let daemonStatusModulePromise: Promise<typeof import("./daemon-status.runtime.js")> | undefined;
 
 function loadDaemonInstallModule() {
   daemonInstallModulePromise ??= import("./install.runtime.js");
@@ -17,7 +17,7 @@ function loadDaemonLifecycleModule() {
 }
 
 function loadDaemonStatusModule() {
-  daemonStatusModulePromise ??= import("./status.runtime.js");
+  daemonStatusModulePromise ??= import("./daemon-status.runtime.js");
   return daemonStatusModulePromise;
 }
 

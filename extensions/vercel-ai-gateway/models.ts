@@ -4,7 +4,7 @@ import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
 
 export const VERCEL_AI_GATEWAY_PROVIDER_ID = "vercel-ai-gateway";
 export const VERCEL_AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
-export const VERCEL_AI_GATEWAY_DEFAULT_MODEL_ID = "anthropic/claude-opus-4.6";
+export const VERCEL_AI_GATEWAY_DEFAULT_MODEL_ID = "anthropic/claude-opus-4.7";
 export const VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF = `${VERCEL_AI_GATEWAY_PROVIDER_ID}/${VERCEL_AI_GATEWAY_DEFAULT_MODEL_ID}`;
 export const VERCEL_AI_GATEWAY_DEFAULT_CONTEXT_WINDOW = 200_000;
 export const VERCEL_AI_GATEWAY_DEFAULT_MAX_TOKENS = 128_000;
@@ -42,6 +42,20 @@ type StaticVercelGatewayModel = Omit<ModelDefinitionConfig, "cost"> & {
 };
 
 const STATIC_VERCEL_AI_GATEWAY_MODEL_CATALOG: readonly StaticVercelGatewayModel[] = [
+  {
+    id: "anthropic/claude-opus-4.7",
+    name: "Claude Opus 4.7",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1_000_000,
+    maxTokens: 128_000,
+    cost: {
+      input: 5,
+      output: 25,
+      cacheRead: 0.5,
+      cacheWrite: 6.25,
+    },
+  },
   {
     id: "anthropic/claude-opus-4.6",
     name: "Claude Opus 4.6",

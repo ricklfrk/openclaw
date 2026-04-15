@@ -71,7 +71,10 @@ import {
   setCompactionSafeguardCancelReason,
 } from "../pi-hooks/compaction-safeguard-runtime.js";
 import { createPreparedEmbeddedPiSettingsManager } from "../pi-project-settings.js";
-import { applyPiCompactionSettingsFromConfig } from "../pi-settings.js";
+import {
+  applyPiCompactionSettingsFromConfig,
+  applyPiRetrySettingsFromConfig,
+} from "../pi-settings.js";
 import { createOpenClawCodingTools } from "../pi-tools.js";
 import { wrapStreamFnTextTransforms } from "../plugin-text-transforms.js";
 import { registerProviderStreamForModel } from "../provider-stream.js";
@@ -820,6 +823,7 @@ export async function compactEmbeddedPiSessionDirect(
         agentDir,
         cfg: params.config,
         contextTokenBudget: ctxInfo.tokens,
+        agentId: sessionAgentId,
       });
       // Sets compaction/pruning runtime state and returns extension factories
       // that must be passed to the resource loader for the safeguard to be active.
@@ -896,6 +900,23 @@ export async function compactEmbeddedPiSessionDirect(
             resourceLoader,
           });
           session = createdSession.session;
+          // Pi SDK's DefaultResourceLoader.reload() (called both explicitly above
+          // when we have extension factories, and implicitly inside
+          // createAgentSession when we don't) rehydrates SettingsManager from
+          // global/project settings files. That wipes out the compaction/retry
+          // overrides applied earlier by createPreparedEmbeddedPiSettingsManager,
+          // so re-apply on the same settingsManager instance after session creation.
+          applyPiCompactionSettingsFromConfig({
+            settingsManager,
+            cfg: params.config,
+            contextTokenBudget: ctxInfo.tokens,
+            agentId: sessionAgentId,
+          });
+          applyPiRetrySettingsFromConfig({
+            settingsManager,
+            cfg: params.config,
+            agentId: sessionAgentId,
+          });
           applySystemPromptOverrideToSession(session, buildSystemPromptOverride(thinkLevel)());
           session.setActiveToolsByName(sessionToolAllowlist);
           // Compaction builds the same embedded system prompt, so it must flow

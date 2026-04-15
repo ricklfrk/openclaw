@@ -286,6 +286,15 @@ export const VENICE_MODEL_CATALOG = [
     privacy: "anonymized",
   },
   {
+    id: "claude-opus-4-7",
+    name: "Claude Opus 4.7 (via Venice)",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 1000000,
+    maxTokens: 128000,
+    privacy: "anonymized",
+  },
+  {
     id: "claude-opus-4-6",
     name: "Claude Opus 4.6 (via Venice)",
     reasoning: true,

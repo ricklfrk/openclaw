@@ -54,7 +54,7 @@ const ANTHROPIC_OPUS_47_TEMPLATE_MODEL_IDS = [
   "claude-opus-4-5",
   "claude-opus-4.5",
 ] as const;
-const ANTHROPIC_OPUS_TEMPLATE_MODEL_IDS = ["claude-opus-4-5", "claude-opus-4.5"] as const;
+const ANTHROPIC_OPUS_46_TEMPLATE_MODEL_IDS = ["claude-opus-4-5", "claude-opus-4.5"] as const;
 const ANTHROPIC_SONNET_46_MODEL_ID = "claude-sonnet-4-6";
 const ANTHROPIC_SONNET_46_DOT_MODEL_ID = "claude-sonnet-4.6";
 const ANTHROPIC_SONNET_TEMPLATE_MODEL_IDS = ["claude-sonnet-4-5", "claude-sonnet-4.5"] as const;
@@ -249,7 +249,7 @@ function resolveAnthropicForwardCompatModel(
       dotModelId: ANTHROPIC_OPUS_46_DOT_MODEL_ID,
       dashTemplateId: "claude-opus-4-5",
       dotTemplateId: "claude-opus-4.5",
-      fallbackTemplateIds: ANTHROPIC_OPUS_TEMPLATE_MODEL_IDS,
+      fallbackTemplateIds: ANTHROPIC_OPUS_46_TEMPLATE_MODEL_IDS,
     }) ??
     resolveAnthropic46ForwardCompatModel({
       ctx,
@@ -265,6 +265,8 @@ function resolveAnthropicForwardCompatModel(
 function shouldUseAnthropicAdaptiveThinkingDefault(modelId: string): boolean {
   const lowerModelId = normalizeLowercaseStringOrEmpty(modelId);
   return (
+    lowerModelId.startsWith(ANTHROPIC_OPUS_47_MODEL_ID) ||
+    lowerModelId.startsWith(ANTHROPIC_OPUS_47_DOT_MODEL_ID) ||
     lowerModelId.startsWith(ANTHROPIC_OPUS_46_MODEL_ID) ||
     lowerModelId.startsWith(ANTHROPIC_OPUS_46_DOT_MODEL_ID) ||
     lowerModelId.startsWith(ANTHROPIC_SONNET_46_MODEL_ID) ||

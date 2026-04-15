@@ -9,7 +9,6 @@ import {
   mergeModelProviderRequestOverrides,
   sanitizeConfiguredModelProviderRequest,
   sanitizeConfiguredProviderRequest,
-  type ProviderRequestTransportOverrides,
 } from "../agents/provider-request-config.js";
 import type { MsgContext } from "../auto-reply/templating.js";
 import { applyTemplate } from "../auto-reply/templating.js";

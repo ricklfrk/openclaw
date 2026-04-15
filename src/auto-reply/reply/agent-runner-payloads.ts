@@ -110,29 +110,32 @@ export async function buildReplyPayloads(params: {
   normalizeMediaPaths?: (payload: ReplyPayload) => Promise<ReplyPayload>;
 }): Promise<{ replyPayloads: ReplyPayload[]; didLogHeartbeatStrip: boolean }> {
   let didLogHeartbeatStrip = params.didLogHeartbeatStrip;
-  const sanitizedPayloads = params.isHeartbeat
-    ? params.payloads
-    : params.payloads.flatMap((payload) => {
-        let text = payload.text;
+  // Heartbeat and normal replies share the same sanitization chain so that
+  // intermediate/confirmation text, stray HEARTBEAT_OK tokens, and Bun fetch
+  // socket errors are consistently stripped regardless of origin path.
+  const sanitizedPayloads = params.payloads.flatMap((payload) => {
+    let text = payload.text;
 
-        if (payload.isError && text && isBunFetchSocketError(text)) {
-          text = formatBunFetchSocketError(text);
-        }
+    if (payload.isError && text && isBunFetchSocketError(text)) {
+      text = formatBunFetchSocketError(text);
+    }
 
-        if (!text || !text.includes("HEARTBEAT_OK")) {
-          return [{ ...payload, text }];
-        }
-        const stripped = stripHeartbeatToken(text, { mode: "message" });
-        if (stripped.didStrip && !didLogHeartbeatStrip) {
-          didLogHeartbeatStrip = true;
-          logVerbose("Stripped stray HEARTBEAT_OK token from reply");
-        }
-        const hasMedia = resolveSendableOutboundReplyParts(payload).hasMedia;
-        if (stripped.shouldSkip && !hasMedia) {
-          return [];
-        }
-        return [{ ...payload, text: stripped.text }];
-      });
+    if (!text || !text.includes("HEARTBEAT_OK")) {
+      return [{ ...payload, text }];
+    }
+    const stripped = stripHeartbeatToken(text, {
+      mode: params.isHeartbeat ? "heartbeat" : "message",
+    });
+    if (stripped.didStrip && !didLogHeartbeatStrip) {
+      didLogHeartbeatStrip = true;
+      logVerbose("Stripped stray HEARTBEAT_OK token from reply");
+    }
+    const hasMedia = resolveSendableOutboundReplyParts(payload).hasMedia;
+    if (stripped.shouldSkip && !hasMedia) {
+      return [];
+    }
+    return [{ ...payload, text: stripped.text }];
+  });
 
   const replyTaggedPayloads = (
     await Promise.all(

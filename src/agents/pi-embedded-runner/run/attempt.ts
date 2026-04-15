@@ -95,6 +95,7 @@ import { createPreparedEmbeddedPiSettingsManager } from "../../pi-project-settin
 import {
   applyPiAutoCompactionGuard,
   applyPiCompactionSettingsFromConfig,
+  applyPiRetrySettingsFromConfig,
 } from "../../pi-settings.js";
 import {
   createClientToolNameConflictError,
@@ -134,6 +135,7 @@ import { DEFAULT_BOOTSTRAP_FILENAME } from "../../workspace.js";
 import { isRunnerAbortError } from "../abort.js";
 import { wrapStreamFnWithBuffer } from "../buffered-stream.js";
 import { isCacheTtlEligibleProvider, readLastCacheTtlTimestamp } from "../cache-ttl.js";
+import { installCheckCompactionDebugLogger } from "../compaction-debug-logger.js";
 import { resolveCompactionTimeoutMs } from "../compaction-safety-timeout.js";
 import { runContextEngineMaintenance } from "../context-engine-maintenance.js";
 import { applyFinalEffectiveToolPolicy } from "../effective-tool-policy.js";
@@ -1055,6 +1057,7 @@ export async function runEmbeddedAttempt(
     let idleTimedOut = false;
     let timedOutDuringCompaction = false;
     let promptError: unknown = null;
+    let removeCompactionDebugLogger: (() => void) | undefined;
     try {
       await repairSessionFileIfNeeded({
         sessionFile: params.sessionFile,
@@ -1126,6 +1129,7 @@ export async function runEmbeddedAttempt(
         agentDir,
         cfg: params.config,
         contextTokenBudget: params.contextTokenBudget,
+        agentId: sessionAgentId,
       });
       applyPiAutoCompactionGuard({
         settingsManager,
@@ -1245,6 +1249,24 @@ export async function runEmbeddedAttempt(
         },
       });
       session = createdSession.session;
+      // Pi SDK's DefaultResourceLoader.reload() (called both explicitly above
+      // when we have extension factories, and implicitly inside
+      // createAgentSession when we don't) rehydrates SettingsManager from
+      // global/project settings files. That wipes out the compaction/retry
+      // overrides applied earlier by createPreparedEmbeddedPiSettingsManager,
+      // so without this re-apply, _checkCompaction always sees the SDK default
+      // reserveTokens (16384) instead of the agent's configured value.
+      applyPiCompactionSettingsFromConfig({
+        settingsManager,
+        cfg: params.config,
+        contextTokenBudget: params.contextTokenBudget,
+        agentId: sessionAgentId,
+      });
+      applyPiRetrySettingsFromConfig({
+        settingsManager,
+        cfg: params.config,
+        agentId: sessionAgentId,
+      });
       applySystemPromptOverrideToSession(session, systemPromptText);
       if (!session) {
         throw new Error("Embedded agent session missing");
@@ -1256,6 +1278,10 @@ export async function runEmbeddedAttempt(
         activeSession.agent.convertToLlm = async (messages) =>
           await baseConvertToLlm(normalizeAssistantReplayContent(messages));
       }
+      removeCompactionDebugLogger = installCheckCompactionDebugLogger({
+        session: activeSession,
+        agentId: params.agentId,
+      });
       let prePromptMessageCount = activeSession.messages.length;
       abortSessionForYield = () => {
         yieldAbortSettled = Promise.resolve(activeSession.abort());
@@ -2921,6 +2947,7 @@ export async function runEmbeddedAttempt(
       // See: https://github.com/openclaw/openclaw/issues/8643
       await cleanupEmbeddedAttemptResources({
         removeToolResultContextGuard,
+        removeCompactionDebugLogger,
         flushPendingToolResultsAfterIdle,
         session,
         sessionManager,

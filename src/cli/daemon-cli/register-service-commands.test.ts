@@ -13,7 +13,7 @@ vi.mock("./install.runtime.js", () => ({
   runDaemonInstall: (opts: unknown) => runDaemonInstall(opts),
 }));
 
-vi.mock("./status.runtime.js", () => ({
+vi.mock("./daemon-status.runtime.js", () => ({
   runDaemonStatus: (opts: unknown) => runDaemonStatus(opts),
 }));
 

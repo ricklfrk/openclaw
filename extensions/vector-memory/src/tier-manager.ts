@@ -9,9 +9,9 @@
  * Adapted from memory-lancedb-pro.
  */
 
-import type { DecayScore } from "./decay-engine.js";
-
-export type MemoryTier = "core" | "working" | "peripheral";
+import type { DecayScore } from "./types.js";
+import type { MemoryTier } from "./types.js";
+export type { MemoryTier } from "./types.js";
 
 export interface TierConfig {
   coreAccessThreshold: number;

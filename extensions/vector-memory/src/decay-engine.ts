@@ -10,7 +10,7 @@
  * Adapted from memory-lancedb-pro.
  */
 
-import type { MemoryTier } from "./tier-manager.js";
+import type { MemoryTier } from "./types.js";
 
 const MS_PER_DAY = 86_400_000;
 
@@ -46,13 +46,8 @@ export const DEFAULT_DECAY_CONFIG: DecayConfig = {
   peripheralDecayFloor: 0.5,
 };
 
-export interface DecayScore {
-  memoryId: string;
-  recency: number;
-  frequency: number;
-  intrinsic: number;
-  composite: number;
-}
+import type { DecayScore } from "./types.js";
+export type { DecayScore } from "./types.js";
 
 export interface DecayableMemory {
   id: string;
