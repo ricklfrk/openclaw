@@ -84,6 +84,11 @@ export const BUILD_ALL_STEPS = [
     kind: "node",
     args: ["--import", "tsx", "scripts/write-cli-compat.ts"],
   },
+  // Control UI assets (`dist/control-ui/`). Kept as a `pnpm` step so that
+  // `scripts/ui.js` can auto-install missing UI deps before running `vite build`.
+  // Absent from the `ciArtifacts` profile on purpose: CI runs `pnpm ui:build`
+  // as a dedicated step so it can be cached/uploaded separately.
+  { label: "ui:build", kind: "pnpm", pnpmArgs: ["ui:build"] },
 ];
 
 export const BUILD_ALL_PROFILES = {
