@@ -1095,6 +1095,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
 
+  extensions/sleep-reset:
+    devDependencies:
+      openclaw:
+        specifier: '*'
+        version: 2026.4.5(@napi-rs/canvas@0.1.97)(node-llama-cpp@3.18.1(typescript@6.0.2))
+
   extensions/speech-core:
     devDependencies:
       '@openclaw/plugin-sdk':

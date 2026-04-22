@@ -46,7 +46,7 @@ function resolveRulesPath(): string {
 
 const RULES_PATH = resolveRulesPath();
 
-type Rule = {
+export type Rule = {
   pattern: string;
   flags?: string;
   replacement?: string;
@@ -55,6 +55,7 @@ type Rule = {
 type ContentBlock = {
   type: string;
   text?: string;
+  arguments?: unknown;
   [key: string]: unknown;
 };
 
@@ -75,7 +76,11 @@ function loadRules(logger: { warn: (msg: string) => void }): Rule[] {
 }
 
 /** Apply all rules to the input string. */
-function applyRules(input: string, rules: Rule[], logger: { warn: (msg: string) => void }): string {
+export function applyRules(
+  input: string,
+  rules: Rule[],
+  logger: { warn: (msg: string) => void },
+): string {
   let result = input;
   for (const rule of rules) {
     if (!rule.pattern) {
@@ -91,8 +96,39 @@ function applyRules(input: string, rules: Rule[], logger: { warn: (msg: string) 
   return result;
 }
 
+/**
+ * Walk the top-level string fields of a toolCall block's `arguments` object
+ * and apply regex rules to each. Only the top level is considered: rules here
+ * are intended for user-facing prose (e.g. `arguments.message` on the built-in
+ * `message` tool, `arguments.text` on other text-bearing tools), not for deep
+ * structural fields. Non-string fields are passed through unchanged.
+ *
+ * Returns the rewritten arguments object if any string field changed,
+ * otherwise `null` so the caller can keep the original block reference.
+ */
+function applyRulesToToolCallArguments(
+  args: Record<string, unknown>,
+  rules: Rule[],
+  logger: { warn: (msg: string) => void },
+): Record<string, unknown> | null {
+  let touched = false;
+  const next: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value === "string") {
+      const transformed = applyRules(value, rules, logger);
+      if (transformed !== value) {
+        next[key] = transformed;
+        touched = true;
+        continue;
+      }
+    }
+    next[key] = value;
+  }
+  return touched ? next : null;
+}
+
 /** Apply regex rules to a message's content, returning a new message if changed. */
-function applyRulesToMessage(
+export function applyRulesToMessage(
   msg: Record<string, unknown>,
   rules: Rule[],
   logger: { warn: (msg: string) => void },
@@ -116,6 +152,28 @@ function applyRulesToMessage(
       const transformed = applyRules(block.text, rules, logger);
       if (transformed !== block.text) {
         blocks.push({ ...block, text: transformed });
+        touched = true;
+        continue;
+      }
+    }
+    // Assistant tool-call blocks carry user-facing prose inside `arguments`
+    // (e.g. `message`, `text`). Without walking this field, rules like
+    // `<disclaimer>…</disclaimer>` would silently skip every assistant turn
+    // that used the `message` tool and the substrings would persist in the
+    // session JSONL, where the LLM replays them as in-context training.
+    if (
+      block.type === "toolCall" &&
+      block.arguments &&
+      typeof block.arguments === "object" &&
+      !Array.isArray(block.arguments)
+    ) {
+      const replaced = applyRulesToToolCallArguments(
+        block.arguments as Record<string, unknown>,
+        rules,
+        logger,
+      );
+      if (replaced) {
+        blocks.push({ ...block, arguments: replaced });
         touched = true;
         continue;
       }

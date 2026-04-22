@@ -399,6 +399,37 @@ export function wrapGoogleNonStreaming(streamFn: StreamFn): StreamFn {
           throw new Error(`Google content filter blocked (finishReason=${reason})`);
         }
 
+        // Silent safety block: Gemini returned finishReason=STOP (mapped to
+        // "stop") but emitted zero text parts and zero tool calls.  This is
+        // what PROHIBITED_CONTENT / SAFETY looks like for some prompts once
+        // safetySettings=OFF is honored by the server — instead of an explicit
+        // error, the server quietly truncates to an empty candidate.  The
+        // symptom downstream is "Agent couldn't generate a response".  Treat
+        // it as a content-filter block so the existing same-key retry loop
+        // (stream-key-rotation) retries up to 5 times before rotating /
+        // failing over, matching the PROHIBITED_CONTENT behavior.
+        //
+        // Safe because: retriable. If the model truly has nothing to say, the
+        // retry returns the same empty result; after MAX_CONTENT_FILTER_ATTEMPTS
+        // the loop falls through to the next key / fallback model.  The only
+        // cost is a handful of extra API calls on pathological prompts.
+        if (output.stopReason === "stop") {
+          const hasTextContent = output.content.some((b) => b.type === "text");
+          const hasToolCall = output.content.some((b) => b.type === "toolCall");
+          if (!hasTextContent && !hasToolCall) {
+            const reason = candidate?.finishReason ?? "unknown";
+            const blockReason =
+              (response.promptFeedback as { blockReason?: string } | undefined)?.blockReason ??
+              "none";
+            log.warn(
+              `[google-nonstream] silent empty response (finishReason=${reason}, promptFeedback.blockReason=${blockReason}, content.length=${output.content.length}); throwing for content-filter retry`,
+            );
+            throw new Error(
+              `Google content filter blocked (finishReason=${reason}-empty, blockReason=${blockReason})`,
+            );
+          }
+        }
+
         stream.push({
           type: "done",
           reason: output.stopReason,

@@ -1278,6 +1278,14 @@ export async function runEmbeddedAttempt(
         activeSession.agent.convertToLlm = async (messages) =>
           await baseConvertToLlm(normalizeAssistantReplayContent(messages));
       }
+      // pi-coding-agent's createAgentSession does not wire Agent.getApiKey, so
+      // pi-agent-core passes options.apiKey=undefined to stream wrappers. That
+      // is safe for the inner sdk streamFn (which calls modelRegistry directly)
+      // but breaks outer bypass wrappers like wrapGoogleNonStreaming and the
+      // single-profile wrapStreamFnWithKeyRotation passthrough, which rely on
+      // options.apiKey. Route to the shared AuthStorage (runtime override is
+      // populated by auth-controller.applyApiKeyInfo).
+      activeSession.agent.getApiKey = (provider: string) => params.authStorage.getApiKey(provider);
       removeCompactionDebugLogger = installCheckCompactionDebugLogger({
         session: activeSession,
         agentId: params.agentId,

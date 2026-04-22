@@ -56,11 +56,24 @@ function setCooldownInMemory(store: AuthProfileStore, profileId: string): void {
   };
 }
 
-/** Content filter blocks are retriable because different API keys may belong
- *  to projects with different safety thresholds. */
+/** Content filter blocks are retriable because (a) different API keys may belong
+ *  to projects with different safety thresholds, and (b) Gemini's content-safety
+ *  classifier is non-deterministic on the same payload — especially for output-
+ *  side PROHIBITED_CONTENT flags — so retrying the same key can still succeed. */
 function isContentFilterBlockMessage(msg: string): boolean {
   return /content filter blocked/i.test(msg);
 }
+
+/**
+ * Max attempts per profile when the error is a content-filter block.
+ * Includes the initial attempt, so "5" = 1 initial call + up to 4 retries on the
+ * same key before rotating to the next profile (or giving up on single-key).
+ *
+ * Rationale: Google's PROHIBITED_CONTENT filter is non-deterministic for output-
+ * side blocks, so same-key retries recover frequently. Rate-limit / overloaded
+ * errors do NOT benefit from same-key retry and skip straight to rotation.
+ */
+const MAX_CONTENT_FILTER_ATTEMPTS_PER_PROFILE = 5;
 
 function isRetriableErrorEvent(event: AssistantMessageEvent): boolean {
   if (event.type !== "error") {
@@ -115,18 +128,18 @@ export type WrapStreamFnWithKeyRotationParams = {
 };
 
 /**
- * Wrap a StreamFn to proactively rotate API keys on each model call and
- * retry with the next key on rate-limit (429 / 503 overloaded) errors.
+ * Wrap a StreamFn to proactively rotate API keys on each model call and:
+ *  - retry with the next key on rate-limit (429 / 503 overloaded) errors
+ *  - retry with the SAME key (up to MAX_CONTENT_FILTER_ATTEMPTS_PER_PROFILE)
+ *    on content-filter blocks before rotating to the next profile, so single-
+ *    profile users still get recovery attempts on non-deterministic Gemini
+ *    PROHIBITED_CONTENT / SAFETY blocks.
  *
  * Must be the outermost wrapper (after wrapStreamFnWithBuffer) so that
  * inner wrappers (non-streaming, buffer) guarantee no partial events on error.
  */
 export function wrapStreamFnWithKeyRotation(params: WrapStreamFnWithKeyRotationParams): StreamFn {
   const { streamFn, profileCandidates, resolveApiKey, authStore, agentDir, rotationState } = params;
-
-  if (profileCandidates.length <= 1) {
-    return streamFn;
-  }
 
   return (model, context, options) => {
     if (!canSafelyRotate(model)) {
@@ -192,94 +205,168 @@ export function wrapStreamFnWithKeyRotation(params: WrapStreamFnWithKeyRotationP
           maxRetries: 0,
         };
 
-        try {
-          const innerStream = await Promise.resolve(streamFn(model, context, callOptions));
+        // Per-profile content-filter retry loop: Gemini's PROHIBITED_CONTENT /
+        // SAFETY classifier is non-deterministic (especially on output-side
+        // blocks), so the same key often succeeds on a retry. For rate-limit
+        // and overloaded errors we still skip straight to rotation — retrying
+        // the same key on 429 is counterproductive.
+        let contentFilterAttempts = 0;
+        let advanceProfile = false;
+        let terminated = false;
 
-          const events: AssistantMessageEvent[] = [];
-          let rateLimitEvent: AssistantMessageEvent | null = null;
+        while (true) {
+          try {
+            const innerStream = await Promise.resolve(streamFn(model, context, callOptions));
 
-          for await (const event of innerStream) {
-            if (isRetriableErrorEvent(event)) {
-              rateLimitEvent = event;
-            } else {
-              events.push(event);
+            const events: AssistantMessageEvent[] = [];
+            let rateLimitEvent: AssistantMessageEvent | null = null;
+            let contentFilterEvent: AssistantMessageEvent | null = null;
+
+            for await (const event of innerStream) {
+              if (isRetriableErrorEvent(event)) {
+                const msg =
+                  (event as { error?: { errorMessage?: string } }).error?.errorMessage ?? "";
+                if (isContentFilterBlockMessage(msg)) {
+                  contentFilterEvent = event;
+                } else {
+                  rateLimitEvent = event;
+                }
+              } else {
+                events.push(event);
+              }
             }
-          }
 
-          if (rateLimitEvent) {
-            triedCount++;
-            const errMsg =
-              (rateLimitEvent as { error?: { errorMessage?: string } }).error?.errorMessage ??
-              "rate limited";
-            log.warn(
-              `[key-rotation] profile ${candidate} hit rate limit: ${errMsg.slice(0, 120)}; trying next key (${triedCount}/${toTryOrder.length} tried)`,
-            );
-            setCooldownInMemory(authStore, candidate);
-            rotationState.skipProfiles.add(candidate);
-            void markAuthProfileFailure({
-              store: authStore,
-              profileId: candidate,
-              reason: "rate_limit",
-              agentDir,
-            });
-            continue;
-          }
+            if (contentFilterEvent) {
+              contentFilterAttempts++;
+              const errMsg =
+                (contentFilterEvent as { error?: { errorMessage?: string } }).error?.errorMessage ??
+                "content filter";
+              if (contentFilterAttempts < MAX_CONTENT_FILTER_ATTEMPTS_PER_PROFILE) {
+                log.warn(
+                  `[key-rotation] profile ${candidate} hit content filter: ${errMsg.slice(0, 120)}; retrying same key (attempt ${contentFilterAttempts + 1}/${MAX_CONTENT_FILTER_ATTEMPTS_PER_PROFILE})`,
+                );
+                continue;
+              }
+              triedCount++;
+              log.warn(
+                `[key-rotation] profile ${candidate} exhausted ${MAX_CONTENT_FILTER_ATTEMPTS_PER_PROFILE} content-filter attempts; trying next key (${triedCount}/${toTryOrder.length} tried)`,
+              );
+              setCooldownInMemory(authStore, candidate);
+              rotationState.skipProfiles.add(candidate);
+              void markAuthProfileFailure({
+                store: authStore,
+                profileId: candidate,
+                reason: "empty_response",
+                agentDir,
+              });
+              advanceProfile = true;
+              break;
+            }
 
-          // Success: replay collected events.
-          for (const event of events) {
-            outputStream.push(event);
-          }
-          outputStream.end();
-          const nextIndex = (profileCandidates.indexOf(candidate) + 1) % profileCandidates.length;
-          rotationState.rotationIndex = nextIndex;
-          return;
-        } catch (err) {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          if (
-            isRateLimitErrorMessage(errMsg) ||
-            isOverloadedErrorMessage(errMsg) ||
-            isContentFilterBlockMessage(errMsg)
-          ) {
-            triedCount++;
-            const kind = isContentFilterBlockMessage(errMsg) ? "content filter" : "rate limit";
-            log.warn(
-              `[key-rotation] profile ${candidate} hit ${kind}: ${errMsg.slice(0, 120)}; trying next key (${triedCount}/${toTryOrder.length} tried)`,
-            );
-            setCooldownInMemory(authStore, candidate);
-            rotationState.skipProfiles.add(candidate);
-            void markAuthProfileFailure({
-              store: authStore,
-              profileId: candidate,
-              reason: isContentFilterBlockMessage(errMsg) ? "empty_response" : "rate_limit",
-              agentDir,
-            });
-            continue;
-          }
-          // Non-retriable error: propagate and stop.
-          outputStream.push({
-            type: "error",
-            reason: "error",
-            error: {
-              role: "assistant" as const,
-              content: [],
-              api: model.api,
-              provider: model.provider,
-              model: model.id,
-              usage: {
-                input: 0,
-                output: 0,
-                cacheRead: 0,
-                cacheWrite: 0,
-                totalTokens: 0,
-                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+            if (rateLimitEvent) {
+              triedCount++;
+              const errMsg =
+                (rateLimitEvent as { error?: { errorMessage?: string } }).error?.errorMessage ??
+                "rate limited";
+              log.warn(
+                `[key-rotation] profile ${candidate} hit rate limit: ${errMsg.slice(0, 120)}; trying next key (${triedCount}/${toTryOrder.length} tried)`,
+              );
+              setCooldownInMemory(authStore, candidate);
+              rotationState.skipProfiles.add(candidate);
+              void markAuthProfileFailure({
+                store: authStore,
+                profileId: candidate,
+                reason: "rate_limit",
+                agentDir,
+              });
+              advanceProfile = true;
+              break;
+            }
+
+            // Success: replay collected events.
+            for (const event of events) {
+              outputStream.push(event);
+            }
+            outputStream.end();
+            const nextIndex = (profileCandidates.indexOf(candidate) + 1) % profileCandidates.length;
+            rotationState.rotationIndex = nextIndex;
+            terminated = true;
+            break;
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            if (isContentFilterBlockMessage(errMsg)) {
+              contentFilterAttempts++;
+              if (contentFilterAttempts < MAX_CONTENT_FILTER_ATTEMPTS_PER_PROFILE) {
+                log.warn(
+                  `[key-rotation] profile ${candidate} threw content filter: ${errMsg.slice(0, 120)}; retrying same key (attempt ${contentFilterAttempts + 1}/${MAX_CONTENT_FILTER_ATTEMPTS_PER_PROFILE})`,
+                );
+                continue;
+              }
+              triedCount++;
+              log.warn(
+                `[key-rotation] profile ${candidate} exhausted ${MAX_CONTENT_FILTER_ATTEMPTS_PER_PROFILE} content-filter attempts; trying next key (${triedCount}/${toTryOrder.length} tried)`,
+              );
+              setCooldownInMemory(authStore, candidate);
+              rotationState.skipProfiles.add(candidate);
+              void markAuthProfileFailure({
+                store: authStore,
+                profileId: candidate,
+                reason: "empty_response",
+                agentDir,
+              });
+              advanceProfile = true;
+              break;
+            }
+            if (isRateLimitErrorMessage(errMsg) || isOverloadedErrorMessage(errMsg)) {
+              triedCount++;
+              log.warn(
+                `[key-rotation] profile ${candidate} threw rate limit: ${errMsg.slice(0, 120)}; trying next key (${triedCount}/${toTryOrder.length} tried)`,
+              );
+              setCooldownInMemory(authStore, candidate);
+              rotationState.skipProfiles.add(candidate);
+              void markAuthProfileFailure({
+                store: authStore,
+                profileId: candidate,
+                reason: "rate_limit",
+                agentDir,
+              });
+              advanceProfile = true;
+              break;
+            }
+            // Non-retriable error: propagate and stop.
+            outputStream.push({
+              type: "error",
+              reason: "error",
+              error: {
+                role: "assistant" as const,
+                content: [],
+                api: model.api,
+                provider: model.provider,
+                model: model.id,
+                usage: {
+                  input: 0,
+                  output: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  totalTokens: 0,
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+                },
+                stopReason: "error" as const,
+                errorMessage: errMsg,
+                timestamp: Date.now(),
               },
-              stopReason: "error" as const,
-              errorMessage: errMsg,
-              timestamp: Date.now(),
-            },
-          } as AssistantMessageEvent);
-          outputStream.end();
+            } as AssistantMessageEvent);
+            outputStream.end();
+            terminated = true;
+            break;
+          }
+        }
+
+        if (terminated) {
           return;
+        }
+        if (advanceProfile) {
+          continue;
         }
       }
 

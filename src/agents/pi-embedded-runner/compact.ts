@@ -900,6 +900,11 @@ export async function compactEmbeddedPiSessionDirect(
             resourceLoader,
           });
           session = createdSession.session;
+          // Route Agent.getApiKey through the shared AuthStorage (populated by
+          // auth-controller.applyApiKeyInfo with the runtime override). Without
+          // this, pi-agent-core passes options.apiKey=undefined to wrappers like
+          // wrapGoogleNonStreaming that bypass pi-coding-agent's inner streamFn.
+          session.agent.getApiKey = (provider: string) => authStorage.getApiKey(provider);
           // Pi SDK's DefaultResourceLoader.reload() (called both explicitly above
           // when we have extension factories, and implicitly inside
           // createAgentSession when we don't) rehydrates SettingsManager from

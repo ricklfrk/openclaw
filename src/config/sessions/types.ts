@@ -128,6 +128,19 @@ export type SessionEntry = {
   heartbeatTaskState?: Record<string, number>;
   sessionId: string;
   updatedAt: number;
+  /**
+   * Timestamp (ms) of the last non-system user interaction on this session.
+   *
+   * Updated only when the inbound event is a real user turn; automated
+   * `heartbeat`, `cron-event`, and `exec-event` providers never write to this
+   * field. Consumers that need to distinguish genuine user activity from
+   * automated system events (for example the `sleep-reset` plugin) should
+   * prefer `lastUserUpdatedAt` over `updatedAt`.
+   *
+   * Absent on legacy entries written before this field was introduced; treat
+   * `undefined` as "unknown, fall back to `updatedAt`".
+   */
+  lastUserUpdatedAt?: number;
   sessionFile?: string;
   /** Parent session key that spawned this session (used for sandbox session-tool scoping). */
   spawnedBy?: string;

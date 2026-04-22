@@ -105,8 +105,123 @@ function interpolateKeys(text: string, keys: Record<string, string>): string {
   return text.replace(/\{\{(random_key_[1-5])\}\}/g, (_match, key: string) => keys[key]);
 }
 
-// The default identity line to replace
-const IDENTITY_LINE = "You are a personal assistant operating inside OpenClaw.";
+// Identity lines the plugin looks for when inline-replacing with Part 1.
+// The current core identity line is "running inside OpenClaw." (cc5c691f00,
+// 2026-04-11); the "operating inside OpenClaw." variant is kept as a fallback
+// for older builds and any agent that still hosts the legacy string. Keep this
+// list in sync with `src/agents/system-prompt.ts`; a core invariant test
+// (see `src/agents/system-prompt.nsfw-identity-invariant.test.ts`) asserts
+// the intersection is non-empty so this list cannot silently drift again.
+export const NSFW_IDENTITY_LINES: readonly string[] = [
+  "You are a personal assistant running inside OpenClaw.",
+  "You are a personal assistant operating inside OpenClaw.",
+];
+
+// ============================================================================
+// <think>…</think> strip
+//
+// When NSFW is ON, Part 2 instructs the model to output its Apex planning
+// inside <think>…</think> tags **inside the message tool argument** (i.e. as
+// plain output text, not as a Gemini native thinking block). Those bytes are
+// then:
+//   • rendered to the user's channel  → we don't want the user seeing planning
+//   • written to the session JSONL    → we don't want the model replaying its
+//                                        own <think> scaffolding next turn
+//                                        (auto-regressive mimicry keeps the
+//                                         template alive even after /nsfw off)
+//
+// The strip is greedy from the first <think> to the last </think> and trailing
+// newlines, matching the user's explicit spec. If either tag is missing the
+// regex simply doesn't match and content passes through unchanged.
+//
+// The strip lives inside the NSFW plugin on purpose: only NSFW's Part 2
+// scaffolds <think> blocks into `message` tool output, so only NSFW should
+// own removing them. The strip runs whenever the plugin is loaded (not only
+// while /nsfw is currently ON for an agent) so residual history mimicry is
+// cleaned up after the toggle is flipped off.
+// ============================================================================
+
+const THINK_BLOCK_REGEX = /<think>[\s\S]*<\/think>\n*/g;
+
+export function stripThinkBlock(text: string): string {
+  return text.replace(THINK_BLOCK_REGEX, "");
+}
+
+type ContentBlock = {
+  type: string;
+  text?: string;
+  arguments?: unknown;
+  [key: string]: unknown;
+};
+
+function stripThinkFromToolCallArguments(args: Record<string, unknown>): {
+  args: Record<string, unknown>;
+  touched: boolean;
+} {
+  let touched = false;
+  const next: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value === "string") {
+      const transformed = stripThinkBlock(value);
+      if (transformed !== value) {
+        next[key] = transformed;
+        touched = true;
+        continue;
+      }
+    }
+    next[key] = value;
+  }
+  return { args: next, touched };
+}
+
+/**
+ * Walk an assistant message and remove <think>…</think> from text blocks and
+ * toolCall argument strings. Returns `null` if nothing changed so the caller
+ * can keep the original reference.
+ */
+export function stripThinkFromAssistantMessage(
+  msg: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const { content } = msg;
+  if (typeof content === "string") {
+    const transformed = stripThinkBlock(content);
+    return transformed === content ? null : { ...msg, content: transformed };
+  }
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  let touched = false;
+  const blocks: ContentBlock[] = [];
+  for (const block of content as ContentBlock[]) {
+    if (typeof block.text === "string") {
+      const transformed = stripThinkBlock(block.text);
+      if (transformed !== block.text) {
+        blocks.push({ ...block, text: transformed });
+        touched = true;
+        continue;
+      }
+    }
+    if (
+      block.type === "toolCall" &&
+      block.arguments &&
+      typeof block.arguments === "object" &&
+      !Array.isArray(block.arguments)
+    ) {
+      const walked = stripThinkFromToolCallArguments(block.arguments as Record<string, unknown>);
+      if (walked.touched) {
+        blocks.push({ ...block, arguments: walked.args });
+        touched = true;
+        continue;
+      }
+    }
+    blocks.push(block);
+  }
+  if (!touched) {
+    return null;
+  }
+  return { ...msg, content: blocks };
+}
 
 /** Parse "provider/model" into providerOverride and modelOverride. */
 function parseProviderModel(
@@ -229,7 +344,7 @@ export default definePluginEntry({
     // Inject prompt fragments when enabled for this agent.
     // Uses before_prompt_build so the hook always runs in the prompt-build phase
     // where event.systemPrompt is available.
-    // Part 1 replaces IDENTITY_LINE inside the core system prompt.
+    // Part 1 inline-replaces the core identity line (see NSFW_IDENTITY_LINES).
     // Part 2 is appended to the end of the system prompt (not user message)
     // to avoid Gemini safety filters flagging jailbreak patterns in user content.
     api.on("before_prompt_build", (event, ctx) => {
@@ -245,18 +360,23 @@ export default definePluginEntry({
       const part1 = interpolateKeys(PART1_TEMPLATE, keys);
       const part2 = interpolateKeys(PART2_TEMPLATE, keys);
 
-      // Replace IDENTITY_LINE with Part 1 inside the core system prompt.
+      // Replace the identity line with Part 1 inside the core system prompt.
+      // Try each known variant; prepend as a last-resort fallback so the
+      // injection still ships even if the core prompt drifts unexpectedly.
       let modifiedSystemPrompt: string;
       const coreSystemPrompt = event.systemPrompt;
-      if (coreSystemPrompt && coreSystemPrompt.includes(IDENTITY_LINE)) {
-        modifiedSystemPrompt = coreSystemPrompt.replace(IDENTITY_LINE, part1);
+      const matchedIdentityLine = coreSystemPrompt
+        ? NSFW_IDENTITY_LINES.find((line) => coreSystemPrompt.includes(line))
+        : undefined;
+      if (coreSystemPrompt && matchedIdentityLine) {
+        modifiedSystemPrompt = coreSystemPrompt.replace(matchedIdentityLine, part1);
         api.logger.info(
-          `nsfw: replaced IDENTITY_LINE in systemPrompt (${coreSystemPrompt.length} → ${modifiedSystemPrompt.length} chars), secKey=${keys.random_key_5}`,
+          `nsfw: replaced identity line "${matchedIdentityLine.slice(0, 40)}…" in systemPrompt (${coreSystemPrompt.length} → ${modifiedSystemPrompt.length} chars), secKey=${keys.random_key_5}`,
         );
       } else {
         modifiedSystemPrompt = coreSystemPrompt ? `${part1}\n\n${coreSystemPrompt}` : part1;
-        api.logger.info(
-          `nsfw: IDENTITY_LINE not found, prepended Part1 (${part1.length} chars) to systemPrompt, secKey=${keys.random_key_5}`,
+        api.logger.warn(
+          `nsfw: identity line not found (core prompt may have changed) — falling back to prepend Part1 (${part1.length} chars) to systemPrompt, secKey=${keys.random_key_5}`,
         );
       }
 
@@ -269,6 +389,38 @@ export default definePluginEntry({
       return {
         systemPrompt: modifiedSystemPrompt,
       };
+    });
+
+    // Strip <think>…</think> from assistant messages before they are persisted
+    // to the session JSONL. See THINK_BLOCK_REGEX comment for rationale.
+    api.on("before_message_write", (event) => {
+      const msg = event.message as unknown as Record<string, unknown>;
+      if (msg.role !== "assistant") {
+        return undefined;
+      }
+      const replaced = stripThinkFromAssistantMessage(msg);
+      if (!replaced) {
+        return undefined;
+      }
+      api.logger.info(`nsfw: stripped <think> block from assistant message before JSONL write`);
+      return { message: replaced as unknown as typeof event.message };
+    });
+
+    // Also strip <think>…</think> from outbound channel content so the user
+    // never sees the Apex planning scaffolding. Runs independently of the
+    // /nsfw toggle for the same reason as the JSONL hook above.
+    api.on("message_sending", (event) => {
+      if (!event.content) {
+        return undefined;
+      }
+      const transformed = stripThinkBlock(event.content);
+      if (transformed === event.content) {
+        return undefined;
+      }
+      api.logger.info(
+        `nsfw: stripped <think> block from outbound content (${event.content.length} → ${transformed.length} chars)`,
+      );
+      return { content: transformed };
     });
   },
 });

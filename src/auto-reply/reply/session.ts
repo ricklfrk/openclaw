@@ -10,6 +10,7 @@ import { resolveGroupSessionKey } from "../../config/sessions/group.js";
 import { canonicalizeMainSessionAlias } from "../../config/sessions/main-session.js";
 import { deriveSessionMetaPatch } from "../../config/sessions/metadata.js";
 import { resolveSessionTranscriptPath, resolveStorePath } from "../../config/sessions/paths.js";
+import { consumePendingResetFlag } from "../../config/sessions/pending-reset-flag.js";
 import { resolveResetPreservedSelection } from "../../config/sessions/reset-preserved-selection.js";
 import {
   evaluateSessionFreshness,
@@ -94,6 +95,23 @@ function resolveExplicitSessionEndReason(
   matchedResetTriggerLower?: string,
 ): PluginHookSessionEndReason {
   return matchedResetTriggerLower === "/reset" ? "reset" : "new";
+}
+
+const KNOWN_SESSION_END_REASONS: ReadonlySet<PluginHookSessionEndReason> = new Set([
+  "new",
+  "reset",
+  "idle",
+  "daily",
+  "sleep",
+  "compaction",
+  "deleted",
+  "unknown",
+]);
+
+function isKnownSessionEndReason(value: unknown): value is PluginHookSessionEndReason {
+  return (
+    typeof value === "string" && KNOWN_SESSION_END_REASONS.has(value as PluginHookSessionEndReason)
+  );
 }
 
 function resolveSessionDefaultAccountId(params: {
@@ -454,11 +472,31 @@ export async function initSessionState(params: {
     Number.isFinite(entry.updatedAt);
   // Forcing freshEntry=true prevents accidental data loss on automated system events.
   const skipImplicitExpiry = hasProviderOwnedSession(entry) && resetPolicy.configured !== true;
-  const entryFreshness = entry
+  let entryFreshness: SessionFreshness | undefined = entry
     ? isSystemEvent || skipImplicitExpiry
       ? ({ fresh: true } satisfies SessionFreshness)
       : evaluateSessionFreshness({ updatedAt: entry.updatedAt, now, policy: resetPolicy })
     : undefined;
+  // Plugins (e.g. sleep-reset) can drop a one-shot flag file to request that
+  // the next non-system turn force a reset, even when the normal freshness
+  // evaluation considers the session fresh. System events (heartbeat,
+  // cron-event, exec-event) must not consume the flag: letting a heartbeat eat
+  // the flag would defeat the point of delaying the reset until the next real
+  // user turn (see README in extensions/sleep-reset/).
+  let pendingResetReason: PluginHookSessionEndReason | undefined;
+  if (entry && !isSystemEvent) {
+    const pending = consumePendingResetFlag(sessionKey);
+    if (pending !== undefined) {
+      log.info(
+        `session-init pending-reset consumed sessionKey=${sessionKey} ` +
+          `reason=${pending.reason ?? "sleep"} ` +
+          `source=${pending.source ?? "unknown"} ` +
+          `requestedAt=${pending.requestedAt ?? "?"}`,
+      );
+      entryFreshness = { ...entryFreshness, fresh: false };
+      pendingResetReason = isKnownSessionEndReason(pending.reason) ? pending.reason : "sleep";
+    }
+  }
   const softResetAllowed =
     softReset.matched &&
     resetAuthorized &&
@@ -475,7 +513,8 @@ export async function initSessionState(params: {
       }) ?? "",
     );
   const freshEntry =
-    (entryFreshness?.fresh ?? false) || (softResetAllowed && canReuseExistingEntry);
+    !pendingResetReason &&
+    ((entryFreshness?.fresh ?? false) || (softResetAllowed && canReuseExistingEntry));
   // Capture the current session entry before any reset so its transcript can be
   // archived afterward.  We need to do this for both explicit resets (/new, /reset)
   // and for scheduled/daily resets where the session has become stale (!freshEntry).
@@ -483,11 +522,12 @@ export async function initSessionState(params: {
   const previousSessionEntry = (resetTriggered || !freshEntry) && entry ? { ...entry } : undefined;
   const previousSessionEndReason = resetTriggered
     ? resolveExplicitSessionEndReason(matchedResetTriggerLower)
-    : resolveStaleSessionEndReason({
+    : (pendingResetReason ??
+      resolveStaleSessionEndReason({
         entry,
         freshness: entryFreshness,
         now,
-      });
+      }));
   clearBootstrapSnapshotOnSessionRollover({
     sessionKey,
     previousSessionId: previousSessionEntry?.sessionId,
@@ -620,6 +660,15 @@ export async function initSessionState(params: {
     ...baseEntry,
     sessionId,
     updatedAt: Date.now(),
+    // Track the last non-system user turn separately from updatedAt so
+    // automated heartbeat/cron/exec events do not silently push the session
+    // past a daily reset boundary. The sleep-reset plugin and any future
+    // idle-aware plugin should prefer this field over updatedAt.
+    //
+    // For a brand-new session (no baseEntry) we only set it on real user
+    // turns; for continuing sessions we preserve baseEntry's value during
+    // system events.
+    lastUserUpdatedAt: isSystemEvent ? baseEntry?.lastUserUpdatedAt : now,
     systemSent,
     abortedLastRun,
     // Persist previously stored thinking/verbose levels when present.

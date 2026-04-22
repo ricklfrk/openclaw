@@ -98,6 +98,31 @@ function makeNonRateLimitErrorEvent(): AssistantMessageEvent {
   } as AssistantMessageEvent;
 }
 
+function makeContentFilterErrorEvent(): AssistantMessageEvent {
+  return {
+    type: "error",
+    reason: "error",
+    error: {
+      role: "assistant",
+      content: [],
+      api: "google-generative-ai",
+      provider: "lab",
+      model: "gemini-3.1-pro-preview",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "error",
+      errorMessage: "Google content filter blocked (finishReason=PROHIBITED_CONTENT)",
+      timestamp: Date.now(),
+    },
+  } as AssistantMessageEvent;
+}
+
 /** Create a mock StreamFn that returns predetermined events per call. */
 function createMockStreamFn(callResponses: AssistantMessageEvent[][]): {
   streamFn: StreamFn;
@@ -164,7 +189,7 @@ describe("canSafelyRotate", () => {
 });
 
 describe("wrapStreamFnWithKeyRotation", () => {
-  it("passes through when only 1 profile candidate", async () => {
+  it("calls streamFn once on success with single profile candidate", async () => {
     const { streamFn, calls } = createMockStreamFn([[makeDoneEvent()]]);
     const state = createKeyRotationState();
     const store = makeAuthStore(["p1"]);
@@ -182,8 +207,178 @@ describe("wrapStreamFnWithKeyRotation", () => {
     );
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe("done");
-    // Passthrough: streamFn should be called directly (no wrapper interception)
     expect(calls).toHaveLength(1);
+    // Single-profile still routes through the wrapper so the resolved apiKey is
+    // passed down to the inner streamFn (important for wrapGoogleNonStreaming
+    // and same-key content-filter retries).
+    expect(calls[0].apiKey).toBe("key-p1");
+  });
+
+  it("retries same key up to 5 attempts on content-filter block (single profile)", async () => {
+    // 4 content-filter blocks then success on 5th attempt.
+    const { streamFn, calls } = createMockStreamFn([
+      [makeContentFilterErrorEvent()],
+      [makeContentFilterErrorEvent()],
+      [makeContentFilterErrorEvent()],
+      [makeContentFilterErrorEvent()],
+      [makeDoneEvent("success on 5th attempt")],
+    ]);
+    const state = createKeyRotationState();
+    const store = makeAuthStore(["p1"]);
+
+    const wrapped = wrapStreamFnWithKeyRotation({
+      streamFn,
+      profileCandidates: ["p1"],
+      resolveApiKey: async () => "key-p1",
+      authStore: store,
+      rotationState: state,
+    });
+
+    const events = await collectEvents(
+      wrapped(geminiModel, { systemPrompt: "", messages: [], tools: [] }, {}),
+    );
+
+    // 5 calls total, all on same key.
+    expect(calls).toHaveLength(5);
+    expect(calls.every((c) => c.apiKey === "key-p1")).toBe(true);
+    // Success events should replay.
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("done");
+    expect(state.allKeysExhausted).toBe(false);
+    // Same-key content-filter retries should NOT mark the profile as skipped.
+    expect(state.skipProfiles.has("p1")).toBe(false);
+  });
+
+  it("gives up after 5 content-filter attempts on single profile", async () => {
+    const { streamFn, calls } = createMockStreamFn([
+      [makeContentFilterErrorEvent()],
+      [makeContentFilterErrorEvent()],
+      [makeContentFilterErrorEvent()],
+      [makeContentFilterErrorEvent()],
+      [makeContentFilterErrorEvent()],
+      [makeContentFilterErrorEvent()], // 6th should not be reached
+    ]);
+    const state = createKeyRotationState();
+    const store = makeAuthStore(["p1"]);
+
+    const wrapped = wrapStreamFnWithKeyRotation({
+      streamFn,
+      profileCandidates: ["p1"],
+      resolveApiKey: async () => "key-p1",
+      authStore: store,
+      rotationState: state,
+    });
+
+    const events = await collectEvents(
+      wrapped(geminiModel, { systemPrompt: "", messages: [], tools: [] }, {}),
+    );
+
+    // Exactly 5 attempts, 6th call must NOT happen.
+    expect(calls).toHaveLength(5);
+    // After exhausting, profile is marked and rotation reports "all exhausted".
+    expect(state.skipProfiles.has("p1")).toBe(true);
+    expect(state.allKeysExhausted).toBe(true);
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("error");
+  });
+
+  it("retries same key on thrown content-filter block (single profile)", async () => {
+    let callCount = 0;
+    const calls: Array<{ apiKey?: string }> = [];
+    const streamFn: StreamFn = (_model, _context, options) => {
+      callCount++;
+      calls.push({ apiKey: (options as { apiKey?: string })?.apiKey });
+      if (callCount < 3) {
+        throw new Error("Google content filter blocked (finishReason=PROHIBITED_CONTENT)");
+      }
+      const stream = createAssistantMessageEventStream();
+      stream.push(makeDoneEvent("third attempt succeeded"));
+      stream.end();
+      return stream;
+    };
+    const state = createKeyRotationState();
+    const store = makeAuthStore(["p1"]);
+
+    const wrapped = wrapStreamFnWithKeyRotation({
+      streamFn,
+      profileCandidates: ["p1"],
+      resolveApiKey: async () => "key-p1",
+      authStore: store,
+      rotationState: state,
+    });
+
+    const events = await collectEvents(
+      wrapped(geminiModel, { systemPrompt: "", messages: [], tools: [] }, {}),
+    );
+
+    expect(callCount).toBe(3);
+    expect(calls.every((c) => c.apiKey === "key-p1")).toBe(true);
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("done");
+    expect(state.skipProfiles.has("p1")).toBe(false);
+  });
+
+  it("rotates on rate-limit with single profile (no same-key retry for 429)", async () => {
+    // Rate-limit is NOT retried on the same key — skips straight to exhaust.
+    const { streamFn, calls } = createMockStreamFn([
+      [makeRateLimitErrorEvent()],
+      [makeDoneEvent("should not be reached")],
+    ]);
+    const state = createKeyRotationState();
+    const store = makeAuthStore(["p1"]);
+
+    const wrapped = wrapStreamFnWithKeyRotation({
+      streamFn,
+      profileCandidates: ["p1"],
+      resolveApiKey: async () => "key-p1",
+      authStore: store,
+      rotationState: state,
+    });
+
+    const events = await collectEvents(
+      wrapped(geminiModel, { systemPrompt: "", messages: [], tools: [] }, {}),
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(state.allKeysExhausted).toBe(true);
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("error");
+  });
+
+  it("content-filter on multi-profile retries same profile before rotating", async () => {
+    // p1 returns content-filter 5 times (exhausts per-profile budget), then rotates to p2 which succeeds.
+    const { streamFn, calls } = createMockStreamFn([
+      [makeContentFilterErrorEvent()],
+      [makeContentFilterErrorEvent()],
+      [makeContentFilterErrorEvent()],
+      [makeContentFilterErrorEvent()],
+      [makeContentFilterErrorEvent()],
+      [makeDoneEvent("from p2")],
+    ]);
+    const state = createKeyRotationState();
+    const store = makeAuthStore(["p1", "p2"]);
+
+    const wrapped = wrapStreamFnWithKeyRotation({
+      streamFn,
+      profileCandidates: ["p1", "p2"],
+      resolveApiKey: async (c) => `key-${c}`,
+      authStore: store,
+      rotationState: state,
+    });
+
+    const events = await collectEvents(
+      wrapped(geminiModel, { systemPrompt: "", messages: [], tools: [] }, {}),
+    );
+
+    // 5 on p1, then 1 on p2.
+    expect(calls).toHaveLength(6);
+    expect(calls.slice(0, 5).every((c) => c.apiKey === "key-p1")).toBe(true);
+    expect(calls[5].apiKey).toBe("key-p2");
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("done");
+    // p1 exhausted → skipped; p2 succeeded → not skipped.
+    expect(state.skipProfiles.has("p1")).toBe(true);
+    expect(state.skipProfiles.has("p2")).toBe(false);
   });
 
   it("passes through for non-safe models (anthropic)", async () => {

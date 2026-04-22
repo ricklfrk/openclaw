@@ -1,8 +1,18 @@
 import { formatErrorMessage } from "../infra/errors.js";
+import { persistCliTurn } from "./cli-runner/session-persist.js";
 import type { PreparedCliRunContext, RunCliAgentParams } from "./cli-runner/types.js";
 import { FailoverError, isFailoverError, resolveFailoverStatus } from "./failover-error.js";
 import { classifyFailoverReason, isFailoverErrorMessage } from "./pi-embedded-helpers.js";
 import type { EmbeddedPiRunResult } from "./pi-embedded-runner.js";
+
+// Map CLI backend ids to the pi-ai `Api` identifier that matches how the
+// backend would be reported if it went through the embedded transport.
+// Keeps session JSONL records comparable across CLI vs embedded paths.
+const CLI_BACKEND_API_MAP: Record<string, string> = {
+  "claude-cli": "anthropic-messages",
+  "google-gemini-cli": "google-gemini-cli",
+  "codex-cli": "openai-codex-responses",
+};
 
 export async function runCliAgent(params: RunCliAgentParams): Promise<EmbeddedPiRunResult> {
   const { prepareCliRunContext } = await import("./cli-runner/prepare.runtime.js");
@@ -90,11 +100,27 @@ export async function runPreparedCliAgent(
     };
   };
 
-  // Try with the provided CLI session ID first
+  const persistTurn = async (output: Awaited<ReturnType<typeof executePreparedCliRun>>) => {
+    await persistCliTurn({
+      sessionFile: params.sessionFile,
+      agentId: params.agentId,
+      sessionKey: params.sessionKey,
+      prompt: params.prompt,
+      images: params.images,
+      assistantText: output.text,
+      provider: params.provider,
+      model: context.modelId,
+      api: CLI_BACKEND_API_MAP[context.backendResolved.id] ?? context.backendResolved.id,
+      startedAt: context.started,
+      usage: output.usage,
+    });
+  };
+
   try {
     try {
       const output = await executePreparedCliRun(context, context.reusableCliSession.sessionId);
       const effectiveCliSessionId = output.sessionId ?? context.reusableCliSession.sessionId;
+      await persistTurn(output);
       return buildCliRunResult({ output, effectiveCliSessionId });
     } catch (err) {
       if (isFailoverError(err)) {
@@ -108,6 +134,7 @@ export async function runPreparedCliAgent(
           // For now, retry without the session ID to create a new session
           const output = await executePreparedCliRun(context, undefined);
           const effectiveCliSessionId = output.sessionId;
+          await persistTurn(output);
           return buildCliRunResult({ output, effectiveCliSessionId });
         }
         throw err;

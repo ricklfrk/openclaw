@@ -24,7 +24,7 @@ export type AgentHarnessResetParams = {
   sessionId?: string;
   sessionKey?: string;
   sessionFile?: string;
-  reason?: "new" | "reset" | "idle" | "daily" | "compaction" | "deleted" | "unknown";
+  reason?: "new" | "reset" | "idle" | "daily" | "sleep" | "compaction" | "deleted" | "unknown";
 };
 
 export type AgentHarness = {
