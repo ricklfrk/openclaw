@@ -141,9 +141,7 @@ export class AccessTracker {
         await this.store.update(id, { metadata: updatedMeta });
       } catch (err) {
         this.pending.set(id, (this.pending.get(id) ?? 0) + delta);
-        this.log(
-          `vector-memory: access-tracker: write-back failed for ${id.slice(0, 8)}: ${String(err)}`,
-        );
+        this.log(`vector-memory: access-tracker: write-back failed for ${id}: ${String(err)}`);
       }
     }
   }

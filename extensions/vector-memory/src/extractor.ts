@@ -53,6 +53,9 @@ const VALID_DECISIONS = new Set(["create", "merge", "skip", "supersede"]);
 
 export interface SmartExtractorConfig {
   user?: string;
+  assistantName?: string;
+  /** When true, user: messages may be from multiple different humans (group chat). */
+  multiUser?: boolean;
   extractMinMessages?: number;
   extractMaxChars?: number;
   log?: (msg: string) => void;
@@ -107,7 +110,9 @@ export class SmartExtractor {
       conversationText.length > maxChars ? conversationText.slice(-maxChars) : conversationText;
     const cleaned = stripEnvelopeMetadata(truncated);
     const user = this.config.user ?? "User";
-    const prompt = buildExtractionPrompt(cleaned, user);
+    const prompt = buildExtractionPrompt(cleaned, user, this.config.assistantName, {
+      multiUser: this.config.multiUser,
+    });
 
     const result = await this.llm.completeJson<{
       memories: Array<{
@@ -377,9 +382,7 @@ export class SmartExtractor {
     });
 
     await this.store.update(matchId, { text: merged.abstract, vector: newVector, metadata });
-    this.log(
-      `vector-memory: extractor: merged [${candidate.category}] into ${matchId.slice(0, 8)}`,
-    );
+    this.log(`vector-memory: extractor: merged [${candidate.category}] into ${matchId}`);
   }
 
   private async handleSupersede(
@@ -425,7 +428,7 @@ export class SmartExtractor {
     await this.store.update(matchId, { metadata: JSON.stringify(existingMeta) });
 
     this.log(
-      `vector-memory: extractor: superseded [${candidate.category}] ${matchId.slice(0, 8)} -> ${newEntry.id.slice(0, 8)}`,
+      `vector-memory: extractor: superseded [${candidate.category}] ${matchId} -> ${newEntry.id}`,
     );
   }
 

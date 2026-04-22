@@ -478,11 +478,14 @@ export class MemoryStore {
     timestampFrom?: number;
     /** Inclusive upper bound (ms epoch) */
     timestampTo?: number;
+    /** Return invalidated entries too (default: false) */
+    includeInvalidated?: boolean;
   }): Promise<MemoryEntry[]> {
     await this.ensureInitialized();
     const offset = opts?.offset ?? 0;
-    const limit = clampInt(opts?.limit ?? 20, 1, 100);
+    const limit = clampInt(opts?.limit ?? 20, 1, 500);
     const sortOrder = opts?.sort ?? "newest";
+    const includeInvalidated = opts?.includeInvalidated ?? false;
 
     let q = this.table!.query().select([
       "id",
@@ -506,11 +509,17 @@ export class MemoryStore {
     if (conditions.length > 0) {
       q = q.where(conditions.join(" AND "));
     }
-    // Fetch enough rows for application-layer sort + pagination
-    const fetchLimit = offset + limit;
-    const rows = await q.limit(Math.max(fetchLimit, 200)).toArray();
 
-    const mapped = rows.map((row) => ({
+    // When a timestamp range is provided the result set is bounded;
+    // fetch generously so app-layer sort covers the full window.
+    // Without a range we must fetch enough for offset+limit.
+    const hasTimeRange = opts?.timestampFrom != null || opts?.timestampTo != null;
+    const fetchLimit = hasTimeRange
+      ? Math.max(offset + limit, 2000)
+      : Math.max(offset + limit, 500);
+    const rows = await q.limit(fetchLimit).toArray();
+
+    let mapped = rows.map((row) => ({
       id: row.id as string,
       text: row.text as string,
       vector: Array.from(row.vector as Iterable<number>),
@@ -520,11 +529,102 @@ export class MemoryStore {
       metadata: (row.metadata as string) || "{}",
     }));
 
+    if (!includeInvalidated) {
+      mapped = mapped.filter((entry) => {
+        try {
+          const meta = JSON.parse(entry.metadata);
+          return !meta.invalidated_at;
+        } catch {
+          return true;
+        }
+      });
+    }
+
     mapped.sort((a, b) =>
       sortOrder === "newest" ? b.timestamp - a.timestamp : a.timestamp - b.timestamp,
     );
 
     return mapped.slice(offset, offset + limit);
+  }
+
+  /**
+   * Find entries whose id starts with `prefix`.
+   * Uses SQL LIKE pushdown so it works regardless of table size.
+   */
+  async findByIdPrefix(prefix: string, maxMatches = 10): Promise<MemoryEntry[]> {
+    await this.ensureInitialized();
+    if (!prefix || prefix.length < 4) {
+      return [];
+    }
+    const safePrefix = escapeSqlLiteral(prefix);
+    const rows = await this.table!.query()
+      .where(`id LIKE '${safePrefix}%'`)
+      .limit(maxMatches + 1)
+      .toArray();
+    return rows.map((row) => ({
+      id: row.id as string,
+      text: row.text as string,
+      vector: Array.from(row.vector as Iterable<number>),
+      category: row.category as MemoryEntry["category"],
+      importance: Number(row.importance),
+      timestamp: Number(row.timestamp),
+      metadata: (row.metadata as string) || "{}",
+    }));
+  }
+
+  /**
+   * Iterate over all entries in batches. Suitable for full-table scans
+   * (compact, maintenance) without loading the entire table into memory.
+   */
+  async *iterateAll(opts?: {
+    batchSize?: number;
+    includeInvalidated?: boolean;
+  }): AsyncGenerator<MemoryEntry[]> {
+    await this.ensureInitialized();
+    const batchSize = clampInt(opts?.batchSize ?? 500, 50, 5000);
+    const includeInvalidated = opts?.includeInvalidated ?? false;
+    let batchOffset = 0;
+
+    for (;;) {
+      const rows = await this.table!.query()
+        .select(["id", "text", "vector", "category", "importance", "timestamp", "metadata"])
+        .limit(batchSize)
+        .offset(batchOffset)
+        .toArray();
+      if (rows.length === 0) {
+        break;
+      }
+
+      let batch = rows.map((row) => ({
+        id: row.id as string,
+        text: row.text as string,
+        vector: Array.from(row.vector as Iterable<number>),
+        category: row.category as MemoryEntry["category"],
+        importance: Number(row.importance),
+        timestamp: Number(row.timestamp),
+        metadata: (row.metadata as string) || "{}",
+      }));
+
+      if (!includeInvalidated) {
+        batch = batch.filter((entry) => {
+          try {
+            const meta = JSON.parse(entry.metadata);
+            return !meta.invalidated_at;
+          } catch {
+            return true;
+          }
+        });
+      }
+
+      if (batch.length > 0) {
+        yield batch;
+      }
+
+      batchOffset += rows.length;
+      if (rows.length < batchSize) {
+        break;
+      }
+    }
   }
 
   async deleteById(id: string): Promise<boolean> {

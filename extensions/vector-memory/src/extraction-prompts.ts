@@ -3,14 +3,64 @@
  * From memory-lancedb-pro with minor simplification.
  */
 
-export function buildExtractionPrompt(conversationText: string, user: string): string {
+export interface BuildExtractionPromptOptions {
+  /**
+   * When true, `user:` messages may come from multiple different humans
+   * (group chat). The prompt instructs the LLM to identify each actual
+   * speaker from conversation content rather than collapsing them into
+   * one name.
+   */
+  multiUser?: boolean;
+}
+
+export function buildExtractionPrompt(
+  conversationText: string,
+  user: string,
+  assistantName?: string,
+  opts?: BuildExtractionPromptOptions,
+): string {
   const currentDate = new Date().toISOString().split("T")[0];
+  const aiName = assistantName?.trim() || "Assistant";
+  const multiUser = opts?.multiUser === true;
+
+  const rolesSection = multiUser
+    ? `## Conversation Roles (Group Chat)
+
+This is a **group chat**. \`user:\` messages may come from **multiple different humans** — do NOT collapse them into one person.
+
+- \`user:\` messages → identify the actual speaker from conversation content (names, nicknames, @mentions, self-references, or metadata like "From: X"). If you cannot confidently attribute a line to a specific person, SKIP it rather than guessing.
+- \`assistant:\` messages → all from **${aiName}** (the AI).
+
+Attribution rules:
+- Use each speaker's actual name (e.g. "Alice 提出 X", "Bob 反對 Y", "${aiName} 回覆 Z"). Never use generic pronouns like "用戶", "助手", "the user", "someone".
+- Each memory must be attributable to a specific named person. Group-wide statements without a clear speaker → SKIP.
+- Put the speaker's name in \`entity_tags\` so the memory is retrievable later.
+- Never write third-person narration ("the group discussed ...", "用戶們 talked about ...").`
+    : `## Conversation Roles
+
+- \`user:\` messages are from **${user}**.
+- \`assistant:\` messages are from **${aiName}**.
+
+Both speakers may say things worth remembering. The only hard rule is **correct attribution**:
+- What ${user} said/did/prefers → write "${user} ..." (use their name).
+- What ${aiName} said/promised/decided → write "${aiName} ..." (use the name).
+- Never mix them up. Never describe one speaker's words as the other's.
+- Never use generic pronouns like "用戶", "助手", "the user", "the assistant" — always use the actual names above.
+- Never write third-person narration ("the user interacts with ...", "用戶與 X 保持高頻互動"). Use direct attribution ("${user} 偏好 X", "${aiName} 答應了 Y").`;
+
   return `Analyze the following session context and extract memories worth long-term preservation.
 
-User: ${user}
+${multiUser ? `Mode: Group Chat (multiple human speakers)` : `User: ${user}`}
+Assistant: ${aiName}
 Current Date: ${currentDate}
 
-Target Output Language: auto (detect from recent messages)
+${rolesSection}
+
+## Language Rule
+
+Memories MUST be written in the same language the conversation actually uses.
+If the conversation is in Chinese, write the memory in Chinese. If English, write in English.
+Do NOT translate or switch languages — preserve the original wording and nuance.
 
 ## Recent Conversation
 ${conversationText}
@@ -18,7 +68,7 @@ ${conversationText}
 # Memory Extraction Criteria
 
 ## What is worth remembering?
-- Personalized information: Information specific to this user, not general domain knowledge
+- Personalized information: Information specific to a named speaker${multiUser ? "" : ` (${user} or ${aiName})`}, not general domain knowledge
 - Long-term validity: Information that will still be useful in future sessions
 - Specific and clear: Has concrete details, not vague generalizations
 
@@ -26,35 +76,37 @@ ${conversationText}
 - General knowledge that anyone would know
 - System/platform metadata: message IDs, sender IDs, timestamps, channel info, JSON envelopes — these are infrastructure noise
 - Temporary information: One-time questions or conversations
-- Vague information: "User has questions about a feature" (no specific details)
+- Vague information: "${multiUser ? "Someone" : user} has questions about a feature" (no specific details)
 - Tool output, error logs, or boilerplate
-- Recall queries / meta-questions: "Do you remember X?", "你还记得X吗?" — retrieval requests, NOT new info
+- Recall queries / meta-questions: "Do you remember X?", "你還記得X嗎?" — retrieval requests, NOT new info
 - Degraded or incomplete references
+- Role-confused extractions: if you cannot tell which speaker said it, skip rather than guess
+- Third-person narration about either speaker — rewrite to direct attribution or skip${multiUser ? "\n- Unattributed group-wide statements with no clearly identifiable speaker" : ""}
 
 # Memory Classification
 
 | Question | Answer | Category |
 |----------|--------|----------|
-| Who is the user? | Identity, attributes | profile |
-| What does the user prefer? | Preferences, habits | preferences |
+| Who is this person? | Identity, attributes | profile |
+| What do they prefer? | Preferences, habits | preferences |
 | What is this thing? | Person, project, organization | entities |
 | What happened? | Decision, milestone | events |
 | How was it solved? | Problem + solution | cases |
 | What is the process? | Reusable steps | patterns |
 
 ## Precise Definition
-**profile** - User identity (static attributes). Test: "User is..."
-**preferences** - User preferences (tendencies). Test: "User prefers/likes..."
+**profile** - A named person's identity (static attributes). Test: "<Name> is..."
+**preferences** - A named person's preferences (tendencies). Test: "<Name> prefers/likes..."
 **entities** - Continuously existing nouns. Test: "XXX's state is..."
-**events** - Things that happened. Test: "XXX did/completed..."
+**events** - Things that happened. Test: "<Name> did/completed..."
 **cases** - Problem + solution pairs. Test: Contains "problem -> solution"
 **patterns** - Reusable processes. Test: Can be used in "similar situations"
 
 # Three-Level Structure
 
-**abstract (L0)**: One-liner index (your own summary). For events, ALWAYS prepend the date (e.g. "2026-04-08: User went to...").
-**overview (L1)**: Structured Markdown summary (your own summary)
-**content (L2)**: **Verbatim quotes** from the conversation that support this memory. Copy the relevant original text exactly — do NOT paraphrase or rewrite. Include speaker labels (user/assistant). Trim only irrelevant filler; preserve the original wording, code snippets, names, and numbers.
+**abstract (L0)**: One-liner index (your own summary). For events, ALWAYS prepend the date and the speaker's actual name (e.g. "2026-04-08: ${multiUser ? "Alice" : user} went to..."). Never use role labels.
+**overview (L1)**: Structured Markdown summary (your own summary). Always refer to speakers by their actual names.
+**content (L2)**: **Verbatim quotes** from the conversation that support this memory. Copy the relevant original text exactly — do NOT paraphrase or rewrite. Keep each line's original speaker label. Trim only irrelevant filler; preserve the original wording, code snippets, names, and numbers.
 
 # Entity Tags
 
@@ -86,7 +138,7 @@ Return JSON:
 }
 
 Notes:
-- Output language should match the dominant language in the conversation
+- Language: follow the Language Rule above — write each memory in the same language the relevant conversation used. Do not translate.
 - Only extract truly valuable personalized information
 - If nothing worth recording, return {"memories": []}
 - Maximum 5 memories per extraction

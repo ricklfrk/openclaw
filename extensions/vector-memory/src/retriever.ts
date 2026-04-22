@@ -96,6 +96,124 @@ function cosineSimilarity(a: number[], b: number[]): number {
 }
 
 // ============================================================================
+// Local BM25-lite Rerank
+// ============================================================================
+
+/**
+ * Tokenize text for BM25 scoring.
+ * Splits on whitespace + punctuation; adds CJK character bigrams.
+ */
+export function tokenize(text: string): string[] {
+  const tokens: string[] = [];
+  // Latin / alphanumeric tokens
+  for (const m of text.toLowerCase().matchAll(/[a-z0-9\u00c0-\u024f]+/g)) {
+    tokens.push(m[0]);
+  }
+  // CJK bigrams (Chinese / Japanese / Korean)
+  const cjk = text.replace(
+    /[^\u4e00-\u9fff\u3400-\u4dbf\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/g,
+    "",
+  );
+  for (let i = 0; i < cjk.length - 1; i++) {
+    tokens.push(cjk.slice(i, i + 2));
+  }
+  if (cjk.length === 1) {
+    tokens.push(cjk);
+  }
+  return tokens;
+}
+
+interface ScoredResult {
+  entry: { text: string; metadata: string; vector: number[] };
+  score: number;
+  sources?: Record<string, unknown>;
+}
+
+/**
+ * BM25-lite reranking over the candidate pool.
+ * Blends keyword relevance (BM25) with the original retrieval score.
+ */
+export function localBm25Rerank<T extends ScoredResult>(query: string, results: T[]): T[] {
+  if (results.length === 0) {
+    return results;
+  }
+
+  const queryTokens = tokenize(query);
+  if (queryTokens.length === 0) {
+    return results;
+  }
+
+  const k1 = 1.5;
+  const b = 0.75;
+
+  // Build per-document token frequency lists and collect corpus stats
+  const docTokens = results.map((r) => {
+    let text = r.entry.text;
+    try {
+      const meta = JSON.parse(r.entry.metadata || "{}");
+      if (meta.l0_abstract) {
+        text += ` ${meta.l0_abstract}`;
+      }
+      if (meta.l2_content) {
+        text += ` ${meta.l2_content}`;
+      }
+    } catch {}
+    return tokenize(text);
+  });
+
+  const N = results.length;
+  const avgDl = docTokens.reduce((sum, d) => sum + d.length, 0) / N || 1;
+
+  // Document frequency for each query term
+  const df = new Map<string, number>();
+  for (const qt of queryTokens) {
+    if (df.has(qt)) {
+      continue;
+    }
+    let count = 0;
+    for (const dt of docTokens) {
+      if (dt.includes(qt)) {
+        count++;
+      }
+    }
+    df.set(qt, count);
+  }
+
+  // Score each document
+  const bm25Scores: number[] = docTokens.map((dt) => {
+    const dl = dt.length;
+    let score = 0;
+    const tfMap = new Map<string, number>();
+    for (const t of dt) {
+      tfMap.set(t, (tfMap.get(t) ?? 0) + 1);
+    }
+    for (const qt of queryTokens) {
+      const tf = tfMap.get(qt) ?? 0;
+      if (tf === 0) {
+        continue;
+      }
+      const docFreq = df.get(qt) ?? 0;
+      const idf = Math.log((N - docFreq + 0.5) / (docFreq + 0.5) + 1);
+      score += idf * ((tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (dl / avgDl))));
+    }
+    return score;
+  });
+
+  // Normalize BM25 scores to [0, 1]
+  const maxBm25 = Math.max(...bm25Scores, 1e-9);
+  const normalized = bm25Scores.map((s) => s / maxBm25);
+
+  // Blend with original scores
+  return results
+    .map((r, i) => ({
+      ...r,
+      score: clamp01(r.score * 0.5 + normalized[i] * 0.5, r.score),
+      sources: { ...r.sources, reranked: { score: normalized[i], method: "bm25-lite" } },
+    }))
+    .toSorted((a, b) => b.score - a.score);
+}
+
+// ============================================================================
 // Rerank Provider Adapters
 // ============================================================================
 
@@ -461,23 +579,8 @@ export class MemoryRetriever {
       } catch {}
     }
 
-    // Fallback: cosine similarity rerank
-    try {
-      const reranked = results.map((result) => {
-        const cosineScore = cosineSimilarity(
-          queryVector,
-          Array.from(result.entry.vector as Iterable<number>),
-        );
-        return {
-          ...result,
-          score: clamp01(result.score * 0.7 + cosineScore * 0.3, result.score),
-          sources: { ...result.sources, reranked: { score: cosineScore } },
-        };
-      });
-      return reranked.toSorted((a, b) => b.score - a.score);
-    } catch {
-      return results;
-    }
+    // Fallback: BM25-lite local rerank (keyword relevance blended with original score)
+    return localBm25Rerank(query, results);
   }
 
   // --------------------------------------------------------------------------

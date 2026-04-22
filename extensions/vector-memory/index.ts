@@ -28,8 +28,9 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { AccessTracker, parseAccessMetadata } from "./src/access-tracker.js";
@@ -149,6 +150,20 @@ interface PluginConfig {
     timeoutMs?: number;
   };
   dbPath?: string;
+  /**
+   * Human-readable name for the human speaker in extraction prompts.
+   * Acts as the default for all agents unless overridden by `userNames`.
+   */
+  userName?: string;
+  /**
+   * Per-agent override for the human speaker name.
+   * - Map value to a string to override that agent's user name.
+   * - Map value to `null` to explicitly mark that agent as multi-user
+   *   (group chat with multiple different humans — prompt will ask the
+   *   LLM to identify each speaker from conversation content).
+   * Falls back to `userName`, then to the agentId.
+   */
+  userNames?: Record<string, string | null>;
   autoCapture?: boolean;
   autoRecall?: boolean;
   autoRecallMaxItems?: number;
@@ -423,6 +438,60 @@ const MAX_USER_MESSAGES_FOR_MEDIA = 5;
 const MEDIA_BLOCK_TYPES = new Set(["image", "audio", "video", "file", "document"]);
 
 /**
+ * Infer a MIME type from a file path extension. Only returns values that pass
+ * `isAcceptedMediaMime`; unknown/unsupported extensions return `undefined`
+ * so the caller skips that attachment rather than sending garbage to the
+ * embedder.
+ */
+function inferMimeFromPath(path: string): string | undefined {
+  const ext = extname(path).toLowerCase();
+  switch (ext) {
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".png":
+      return "image/png";
+    case ".gif":
+      return "image/gif";
+    case ".webp":
+      return "image/webp";
+    case ".mp3":
+      return "audio/mpeg";
+    case ".wav":
+      return "audio/wav";
+    case ".mp4":
+    case ".m4v":
+      return "video/mp4";
+    case ".mov":
+      return "video/quicktime";
+    case ".webm":
+      return "video/webm";
+    case ".pdf":
+      return "application/pdf";
+    default:
+      return undefined;
+  }
+}
+
+/** Parse a MIME hint captured from `[media attached: ... (mime)]` text. */
+function normalizeMimeHint(raw: string | undefined): string | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  // Strip any parameters (e.g. "image/jpeg; charset=binary" → "image/jpeg").
+  const trimmed = raw.trim().split(";")[0]?.trim().toLowerCase();
+  if (!trimmed || !trimmed.includes("/")) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+interface MediaAttachmentHint {
+  path: string;
+  mimeHint?: string;
+}
+
+/**
  * Try to extract base64 data + MIME from a content block.
  * Supports multiple provider formats:
  *   - OpenClaw:  { type: "image"|"audio"|..., data: base64, mimeType }
@@ -458,12 +527,86 @@ function tryExtractMediaFromBlock(
 }
 
 /**
+ * Regex that captures `[media attached: /path (mime) | url]` and
+ * `[media attached N/M: /path (mime) | url]`. Only `path` is required;
+ * `(mime)` and `| url` are optional and handled gracefully if absent.
+ *
+ * Capture groups:
+ *   1 — path (up to the first whitespace or closing `)`/`|`/`]`)
+ *   2 — optional mime hint (contents of the parenthesised group)
+ */
+const MEDIA_ATTACHED_RE =
+  /\[media attached(?:\s+\d+\/\d+)?:\s*(\S+?)(?:\s*\(([^)]+)\))?(?:\s*\|[^\]]*)?\]/gi;
+
+function parseMediaAttachments(joinedText: string): MediaAttachmentHint[] {
+  const hints: MediaAttachmentHint[] = [];
+  MEDIA_ATTACHED_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = MEDIA_ATTACHED_RE.exec(joinedText)) !== null) {
+    const rawPath = match[1];
+    if (!rawPath) {
+      continue;
+    }
+    // Skip the "[media attached: N files]" summary line which has no path.
+    if (/^\d+$/.test(rawPath)) {
+      continue;
+    }
+    hints.push({ path: rawPath, mimeHint: normalizeMimeHint(match[2]) });
+  }
+  return hints;
+}
+
+/**
+ * Read a media file from disk, validating size + MIME. Returns `null` for any
+ * reason to skip (missing file, unreadable, over size cap, unknown MIME).
+ * Errors are delegated to the caller-supplied `logDebug`; nothing throws.
+ */
+async function readMediaFromDisk(
+  hint: MediaAttachmentHint,
+  logDebug: (msg: string) => void,
+): Promise<{ data: Buffer; mimeType: string } | null> {
+  const mime = hint.mimeHint ?? inferMimeFromPath(hint.path);
+  if (!mime || !isAcceptedMediaMime(mime)) {
+    return null;
+  }
+  try {
+    const stat = await fsStat(hint.path);
+    if (!stat.isFile()) {
+      return null;
+    }
+    if (stat.size > MAX_MEDIA_BYTES) {
+      logDebug(`vector-memory: media file too large (${stat.size} bytes): ${hint.path}`);
+      return null;
+    }
+    const data = await fsReadFile(hint.path);
+    return { data, mimeType: mime };
+  } catch (err) {
+    logDebug(`vector-memory: failed to read media ${hint.path}: ${String(err)}`);
+    return null;
+  }
+}
+
+/**
  * Extract media from conversation messages (last N user messages only).
  * Supports image, audio, video, file, and document block types.
+ *
+ * Two extraction paths per message:
+ *   1) Inline base64 content blocks (OpenClaw / Anthropic provider shapes).
+ *   2) On-disk attachments referenced via `[media attached: /path (mime)]`
+ *      text breadcrumbs. This is the format most channels (Signal, Telegram,
+ *      iMessage, Discord, WhatsApp) use when the channel wrote the media to
+ *      disk and injected a text note instead of inlining bytes. Without this
+ *      fallback, multimodal embedders (gemini-embedding-2-preview) never see
+ *      the actual media content and we end up with junk text-only memories
+ *      like "[image] 吃上去很奇怪".
  */
-function extractMediaFromMessages(messages: unknown[]): ExtractedMedia[] {
+export async function extractMediaFromMessages(
+  messages: unknown[],
+  opts?: { logDebug?: (msg: string) => void },
+): Promise<ExtractedMedia[]> {
   const results: ExtractedMedia[] = [];
   const arr = Array.isArray(messages) ? messages : [];
+  const logDebug = opts?.logDebug ?? (() => {});
 
   // Only scan the last N user messages to avoid O(n) over long histories
   let userMsgCount = 0;
@@ -493,22 +636,10 @@ function extractMediaFromMessages(messages: unknown[]): ExtractedMedia[] {
     }
     const joinedText = textParts.join(" ");
 
-    // Collect per-attachment paths from [media attached N/M: /path ...] tags.
-    // Multi-image messages emit "[media attached: N files]\n[media attached 1/N: path ...]..."
-    // Single-image messages emit "[media attached: path ...]".
-    const mediaPaths: string[] = [];
-    const indexedPathRe = /\[media attached \d+\/\d+:\s*(\S+)/gi;
-    let indexedMatch: RegExpExecArray | null;
-    while ((indexedMatch = indexedPathRe.exec(joinedText)) !== null) {
-      mediaPaths.push(indexedMatch[1]);
-    }
-    if (mediaPaths.length === 0) {
-      // Single-attachment format: [media attached: /path ...]
-      const singleMatch = joinedText.match(/\[media attached:\s*(\/\S+)/i);
-      if (singleMatch) {
-        mediaPaths.push(singleMatch[1]);
-      }
-    }
+    // Collect per-attachment path+mime hints from the text breadcrumbs.
+    // Works for both "[media attached: /path (mime)]" and the
+    // indexed multi-file form "[media attached 1/N: /path (mime)]".
+    const mediaAttachments = parseMediaAttachments(joinedText);
 
     const rawSurrounding = stripEnvelopeMetadata(stripPluginInjections(joinedText))
       .replace(/\[media attached[^\]]*\]/gi, "")
@@ -518,6 +649,11 @@ function extractMediaFromMessages(messages: unknown[]): ExtractedMedia[] {
       .slice(0, 300);
     const surrounding = rawSurrounding.length >= 10 ? rawSurrounding : "[Media from conversation]";
 
+    // Track which attachment hints were already matched to an inline block so
+    // we only fall back to disk reads for the remainder.
+    const consumedHintIndices = new Set<number>();
+
+    // Path 1: inline base64 content blocks
     let mediaBlockIdx = 0;
     for (const part of content) {
       if (results.length >= MAX_MEDIA_PER_TURN) {
@@ -538,12 +674,46 @@ function extractMediaFromMessages(messages: unknown[]): ExtractedMedia[] {
           mediaBlockIdx++;
           continue;
         }
-        const mediaPath = mediaPaths[mediaBlockIdx] ?? mediaPaths[0];
-        results.push({ data: buf, mimeType: extracted.mimeType, context: surrounding, mediaPath });
+        const hint = mediaAttachments[mediaBlockIdx] ?? mediaAttachments[0];
+        if (hint) {
+          consumedHintIndices.add(mediaAttachments.indexOf(hint));
+        }
+        results.push({
+          data: buf,
+          mimeType: extracted.mimeType,
+          context: surrounding,
+          mediaPath: hint?.path,
+        });
         mediaBlockIdx++;
       } catch {
         // invalid base64
       }
+    }
+
+    // Path 2: on-disk fallback for any text-breadcrumb attachments that were
+    // not paired with an inline block. This is the common case for Signal and
+    // other channels that don't inline base64 into the message content.
+    for (let hintIdx = 0; hintIdx < mediaAttachments.length; hintIdx++) {
+      if (results.length >= MAX_MEDIA_PER_TURN) {
+        break;
+      }
+      if (consumedHintIndices.has(hintIdx)) {
+        continue;
+      }
+      const hint = mediaAttachments[hintIdx];
+      if (!hint) {
+        continue;
+      }
+      const loaded = await readMediaFromDisk(hint, logDebug);
+      if (!loaded) {
+        continue;
+      }
+      results.push({
+        data: loaded.data,
+        mimeType: loaded.mimeType,
+        context: surrounding,
+        mediaPath: hint.path,
+      });
     }
   }
   return results;
@@ -680,7 +850,11 @@ export default definePluginEntry({
       for (const agentId of storeManager.agentIds) {
         try {
           const store = storeManager.getStore(agentId);
-          const allEntries = await store.listAll({ limit: 100 });
+          // Full-scan: hourly background task, acceptable to load entire agent memory
+          const allEntries: import("./src/store.js").MemoryEntry[] = [];
+          for await (const batch of store.iterateAll()) {
+            allEntries.push(...batch);
+          }
           if (allEntries.length === 0) {
             continue;
           }
@@ -812,8 +986,32 @@ export default definePluginEntry({
           }
 
           const store = storeManager.getStore(agentId);
+          // Resolve assistant display name + group-chat flag from agent config
+          const agentsCfg = api.config.agents as { list?: unknown } | undefined;
+          const agentList = Array.isArray(agentsCfg?.list) ? agentsCfg.list : [];
+          const agentEntry = agentList.find(
+            (e) => (e as { id?: string } | null)?.id === agentId,
+          ) as { identity?: { name?: string }; groupChat?: Record<string, unknown> } | undefined;
+          const assistantName = agentEntry?.identity?.name?.trim() || undefined;
+
+          // Resolve user name: per-agent override > global default > agentId
+          // `null` in userNames means "multi-user group chat — no single name"
+          const perAgentOverride = config.userNames?.[agentId];
+          const hasExplicitMultiUser =
+            config.userNames !== undefined &&
+            agentId in config.userNames &&
+            perAgentOverride === null;
+          const hasExplicitSingleUser = typeof perAgentOverride === "string";
+          // Auto-detect group chat from agent config only when there's no explicit override
+          const autoGroupChat =
+            !hasExplicitSingleUser && !hasExplicitMultiUser && agentEntry?.groupChat !== undefined;
+          const multiUser = hasExplicitMultiUser || autoGroupChat;
+          const userName = multiUser ? "User" : perAgentOverride || config.userName || agentId;
+
           const extractor = new SmartExtractor(store, embedder, llm, {
-            user: agentId,
+            user: userName,
+            assistantName,
+            multiUser,
             extractMaxChars: config.extractMaxChars ?? 8000,
             log: (msg) => logDebug(msg),
             admissionController: getAdmissionController(agentId) ?? undefined,
@@ -843,7 +1041,7 @@ export default definePluginEntry({
           // Multimodal: embed actual media content
           // Non-multimodal: still capture metadata using text embedding of context
           try {
-            const mediaItems = extractMediaFromMessages(messages);
+            const mediaItems = await extractMediaFromMessages(messages, { logDebug });
             if (mediaItems.length > 0) {
               let mediaCaptured = 0;
               for (const item of mediaItems) {
@@ -1063,7 +1261,7 @@ export default definePluginEntry({
               // Only append ID when the content is incomplete — either truncated by
               // budget or missing L1/L2 detail — so the agent can expand if needed.
               const needsExpandHint = wasTruncated || !hasFullDetail;
-              const idSuffix = needsExpandHint ? ` (id:${result.entry.id.slice(0, 8)})` : "";
+              const idSuffix = needsExpandHint ? ` (id:${result.entry.id})` : "";
               const line = `- ${prefix} ${summary}${idSuffix}`;
               if (needsExpandHint) {
                 truncatedCount++;

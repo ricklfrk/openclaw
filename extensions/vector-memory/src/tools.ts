@@ -29,7 +29,7 @@ import type { Embedder } from "./embedder.js";
 import { convertFileForEmbedding } from "./media-convert.js";
 import { isNoise } from "./noise-filter.js";
 import { createRetriever, type RetrievalConfig } from "./retriever.js";
-import type { StoreManager, MemoryEntry } from "./store.js";
+import type { StoreManager, MemoryStore, MemoryEntry } from "./store.js";
 import type { MemoryTier } from "./tier-manager.js";
 
 function stringEnum<T extends readonly [string, ...string[]]>(values: T) {
@@ -64,6 +64,40 @@ function parseMeta(entry: MemoryEntry): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+type IdResolution =
+  | { kind: "exact"; entry: MemoryEntry }
+  | { kind: "ambiguous"; candidates: MemoryEntry[] }
+  | { kind: "not_found" };
+
+/**
+ * Resolve a full UUID or >=4 char prefix to a unique memory entry.
+ * Tries exact match first; on miss, falls back to SQL LIKE prefix search.
+ */
+async function resolveIdOrPrefix(store: MemoryStore, idOrPrefix: string): Promise<IdResolution> {
+  const trimmed = idOrPrefix.trim();
+  if (!trimmed || trimmed.length < 4) {
+    return { kind: "not_found" };
+  }
+
+  const exact = await store.getById(trimmed);
+  if (exact) {
+    return { kind: "exact", entry: exact };
+  }
+
+  if (trimmed.length >= 36) {
+    return { kind: "not_found" };
+  }
+
+  const prefixMatches = await store.findByIdPrefix(trimmed, 10);
+  if (prefixMatches.length === 0) {
+    return { kind: "not_found" };
+  }
+  if (prefixMatches.length === 1) {
+    return { kind: "exact", entry: prefixMatches[0] };
+  }
+  return { kind: "ambiguous", candidates: prefixMatches };
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {
@@ -194,7 +228,7 @@ export function createRecallTool(deps: ToolDeps) {
             }
           } catch {}
           const dateStr = new Date(r.entry.timestamp).toISOString().split("T")[0];
-          return `${i + 1}. [${dateStr}][${displayCategory}] ${truncateText(title, 200)}${detail} (score: ${r.score.toFixed(3)}, id: ${r.entry.id.slice(0, 8)}${tagsSuffix})`;
+          return `${i + 1}. [${dateStr}][${displayCategory}] ${truncateText(title, 200)}${detail} (score: ${r.score.toFixed(3)}, id: ${r.entry.id}${tagsSuffix})`;
         });
 
         return {
@@ -304,7 +338,7 @@ export function createStoreTool(deps: ToolDeps) {
               content: [
                 {
                   type: "text",
-                  text: `Similar memory already exists: "${truncateText(existing[0].entry.text, 80)}" (id: ${existing[0].entry.id.slice(0, 8)}, similarity: ${existing[0].score.toFixed(3)}). Use vector_memory_update to modify it instead.`,
+                  text: `Similar memory already exists: "${truncateText(existing[0].entry.text, 80)}" (id: ${existing[0].entry.id}, similarity: ${existing[0].score.toFixed(3)}). Use vector_memory_update to modify it instead.`,
                 },
               ],
               details: {
@@ -323,7 +357,7 @@ export function createStoreTool(deps: ToolDeps) {
               .slice(0, 2)
               .map(
                 (r) =>
-                  `"${truncateText(r.entry.text, 80)}" (id: ${r.entry.id.slice(0, 8)}, similarity: ${r.score.toFixed(3)})`,
+                  `"${truncateText(r.entry.text, 80)}" (id: ${r.entry.id}, similarity: ${r.score.toFixed(3)})`,
               )
               .join("; ");
             conflictWarning =
@@ -361,15 +395,13 @@ export function createStoreTool(deps: ToolDeps) {
           metadata,
         });
 
-        deps.log(
-          `vector-memory: store tool [${agentId}][${categoryLabel}] id=${entry.id.slice(0, 8)}`,
-        );
+        deps.log(`vector-memory: store tool [${agentId}][${categoryLabel}] id=${entry.id}`);
 
         return {
           content: [
             {
               type: "text",
-              text: `Stored vector memory: [${categoryLabel}] "${truncateText(text, 60)}" (id: ${entry.id.slice(0, 8)})${conflictWarning}`,
+              text: `Stored vector memory: [${categoryLabel}] "${truncateText(text, 60)}" (id: ${entry.id})${conflictWarning}`,
             },
           ],
           details: {
@@ -406,7 +438,10 @@ export function createForgetTool(deps: ToolDeps) {
     parameters: Type.Object({
       query: Type.Optional(Type.String({ description: "Search query to find memory to delete" })),
       memoryId: Type.Optional(
-        Type.String({ description: "Specific memory ID (full UUID or 8+ char prefix)" }),
+        Type.String({
+          description:
+            "Full 36-char UUID (8+ char prefix still accepted for backward compatibility)",
+        }),
       ),
     }),
     async execute(_toolCallId: string, params: unknown) {
@@ -423,34 +458,45 @@ export function createForgetTool(deps: ToolDeps) {
 
         const store = deps.storeManager.getStore(agentId);
 
-        // Direct ID deletion
+        // Direct ID deletion (supports full UUID or prefix)
         if (memoryId) {
-          const existing = await store.getById(memoryId);
-          if (!existing) {
+          const resolved = await resolveIdOrPrefix(store, memoryId);
+          if (resolved.kind === "not_found") {
             return {
               content: [{ type: "text", text: `Memory not found: ${memoryId}` }],
               details: { error: "not_found", agentId },
             };
           }
+          if (resolved.kind === "ambiguous") {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Multiple memories match prefix "${memoryId}" (${resolved.candidates.length} matches). Provide a longer prefix or the full UUID.`,
+                },
+              ],
+              details: { error: "ambiguous_prefix", agentId, count: resolved.candidates.length },
+            };
+          }
 
-          // Mark as invalidated instead of hard delete (preserves history)
+          const existing = resolved.entry;
           let meta: Record<string, unknown> = {};
           try {
             meta = JSON.parse(existing.metadata || "{}");
           } catch {}
           meta.invalidated_at = Date.now();
           meta.invalidated_by = "agent_tool";
-          await store.update(memoryId, { metadata: JSON.stringify(meta) });
+          await store.update(existing.id, { metadata: JSON.stringify(meta) });
 
-          deps.log(`vector-memory: forget tool [${agentId}] invalidated ${memoryId.slice(0, 8)}`);
+          deps.log(`vector-memory: forget tool [${agentId}] invalidated ${existing.id}`);
           return {
             content: [
               {
                 type: "text",
-                text: `Deleted vector memory: ${existing.text.slice(0, 60)} (id: ${memoryId.slice(0, 8)})`,
+                text: `Deleted vector memory: ${existing.text.slice(0, 60)} (id: ${existing.id})`,
               },
             ],
-            details: { action: "forget", id: memoryId, agentId },
+            details: { action: "forget", id: existing.id, agentId },
           };
         }
 
@@ -480,13 +526,13 @@ export function createForgetTool(deps: ToolDeps) {
         await store.update(target.entry.id, { metadata: JSON.stringify(meta) });
 
         deps.log(
-          `vector-memory: forget tool [${agentId}] invalidated ${target.entry.id.slice(0, 8)} via query`,
+          `vector-memory: forget tool [${agentId}] invalidated ${target.entry.id} via query`,
         );
         return {
           content: [
             {
               type: "text",
-              text: `Deleted vector memory: ${target.entry.text.slice(0, 60)} (id: ${target.entry.id.slice(0, 8)}, score: ${target.score.toFixed(3)})`,
+              text: `Deleted vector memory: ${target.entry.text.slice(0, 60)} (id: ${target.entry.id}, score: ${target.score.toFixed(3)})`,
             },
           ],
           details: { action: "forget", id: target.entry.id, score: target.score, agentId },
@@ -556,7 +602,9 @@ export function createUpdateTool(deps: ToolDeps) {
       "Update an existing vector memory entry. Can change text, category, or importance. " +
       "The old version is preserved as superseded history.",
     parameters: Type.Object({
-      memoryId: Type.String({ description: "Memory ID to update (full UUID or 8+ char prefix)" }),
+      memoryId: Type.String({
+        description: "Full 36-char UUID (8+ char prefix still accepted for backward compatibility)",
+      }),
       text: Type.Optional(Type.String({ description: "New text content" })),
       category: Type.Optional(stringEnum([...MEMORY_CATEGORIES])),
       importance: Type.Optional(Type.Number({ description: "New importance score 0-1" })),
@@ -584,14 +632,27 @@ export function createUpdateTool(deps: ToolDeps) {
         }
 
         const store = deps.storeManager.getStore(agentId);
-        const existing = await store.getById(memoryId);
-        if (!existing) {
+        const resolved = await resolveIdOrPrefix(store, memoryId);
+        if (resolved.kind === "not_found") {
           return {
             content: [{ type: "text", text: `Memory not found: ${memoryId}` }],
             details: { error: "not_found", agentId },
           };
         }
+        if (resolved.kind === "ambiguous") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Multiple memories match prefix "${memoryId}" (${resolved.candidates.length} matches). Provide a longer prefix or the full UUID.`,
+              },
+            ],
+            details: { error: "ambiguous_prefix", agentId, count: resolved.candidates.length },
+          };
+        }
 
+        const existing = resolved.entry;
+        const resolvedId = existing.id;
         const updates: Record<string, unknown> = {};
         const meta = parseMeta(existing);
 
@@ -628,19 +689,19 @@ export function createUpdateTool(deps: ToolDeps) {
         });
 
         updates.metadata = JSON.stringify(meta);
-        await store.update(memoryId, updates as Parameters<typeof store.update>[1]);
+        await store.update(resolvedId, updates as Parameters<typeof store.update>[1]);
 
-        deps.log(`vector-memory: update tool [${agentId}] updated ${memoryId.slice(0, 8)}`);
+        deps.log(`vector-memory: update tool [${agentId}] updated ${resolvedId}`);
         return {
           content: [
             {
               type: "text",
-              text: `Updated memory ${memoryId.slice(0, 8)}: ${Object.keys(updates)
+              text: `Updated memory ${resolvedId}: ${Object.keys(updates)
                 .filter((k) => k !== "metadata")
                 .join(", ")}`,
             },
           ],
-          details: { action: "update", id: memoryId, agentId, fields: Object.keys(updates) },
+          details: { action: "update", id: resolvedId, agentId, fields: Object.keys(updates) },
         };
       } catch (err) {
         deps.log(`vector-memory: update tool error [${agentId}]: ${String(err)}`);
@@ -822,7 +883,7 @@ export function createListTool(deps: ToolDeps) {
           const tier = (meta.tier as string) || "working";
           const entryDate = new Date(entry.timestamp).toISOString().split("T")[0];
           const accessCount = typeof meta.accessCount === "number" ? meta.accessCount : 0;
-          return `${safeOffset + i + 1}. [${entryDate}][${cat}][${tier}] ${truncateText(abstract, 120)} (id: ${entry.id.slice(0, 8)}, imp: ${entry.importance.toFixed(2)}, access: ${accessCount})`;
+          return `${safeOffset + i + 1}. [${entryDate}][${cat}][${tier}] ${truncateText(abstract, 120)} (id: ${entry.id}, imp: ${entry.importance.toFixed(2)}, access: ${accessCount})`;
         });
 
         const sortLabel = safeSort === "newest" ? "newest first" : "oldest first";
@@ -887,8 +948,11 @@ export function createCompactTool(deps: ToolDeps) {
         const store = deps.storeManager.getStore(agentId);
         const safeThreshold = Math.min(0.99, Math.max(0.85, threshold));
 
-        // Load all entries
-        const allEntries = await store.listAll({ limit: 100 });
+        // Full-scan via iterateAll so we process the entire store, not just 100
+        const allEntries: MemoryEntry[] = [];
+        for await (const batch of store.iterateAll({ includeInvalidated: true })) {
+          allEntries.push(...batch);
+        }
         if (allEntries.length === 0) {
           return {
             content: [{ type: "text", text: "No memories to compact." }],
@@ -944,7 +1008,7 @@ export function createCompactTool(deps: ToolDeps) {
           ];
           for (const pair of duplicatePairs.slice(0, 10)) {
             lines.push(
-              `  remove ${pair.removeId.slice(0, 8)} (keep ${pair.keepId.slice(0, 8)}, sim: ${pair.similarity.toFixed(3)})`,
+              `  remove ${pair.removeId} (keep ${pair.keepId}, sim: ${pair.similarity.toFixed(3)})`,
             );
           }
           return {
@@ -1012,7 +1076,9 @@ export function createPromoteTool(deps: ToolDeps) {
       "Promote a memory to a higher tier (peripheral → working → core). " +
       "Higher-tier memories decay slower and are prioritized in recall.",
     parameters: Type.Object({
-      memoryId: Type.String({ description: "Memory ID to promote" }),
+      memoryId: Type.String({
+        description: "Full 36-char UUID (8+ char prefix still accepted for backward compatibility)",
+      }),
       targetTier: optionalStringEnum(["working", "core"] as const),
     }),
     async execute(_toolCallId: string, params: unknown) {
@@ -1021,14 +1087,27 @@ export function createPromoteTool(deps: ToolDeps) {
 
       try {
         const store = deps.storeManager.getStore(agentId);
-        const entry = await store.getById(memoryId);
-        if (!entry) {
+        const resolved = await resolveIdOrPrefix(store, memoryId);
+        if (resolved.kind === "not_found") {
           return {
             content: [{ type: "text", text: `Memory not found: ${memoryId}` }],
             details: { error: "not_found", agentId },
           };
         }
+        if (resolved.kind === "ambiguous") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Multiple memories match prefix "${memoryId}" (${resolved.candidates.length} matches). Provide a longer prefix or the full UUID.`,
+              },
+            ],
+            details: { error: "ambiguous_prefix", agentId, count: resolved.candidates.length },
+          };
+        }
 
+        const entry = resolved.entry;
+        const resolvedId = entry.id;
         const meta = parseMeta(entry);
         const currentTier = normalizeTier(meta.tier as string);
         const currentIdx = TIER_ORDER.indexOf(currentTier);
@@ -1062,19 +1141,17 @@ export function createPromoteTool(deps: ToolDeps) {
 
         meta.tier = newTier;
         meta.promoted_at = Date.now();
-        await store.update(memoryId, { metadata: JSON.stringify(meta) });
+        await store.update(resolvedId, { metadata: JSON.stringify(meta) });
 
-        deps.log(
-          `vector-memory: promote [${agentId}] ${memoryId.slice(0, 8)}: ${currentTier} → ${newTier}`,
-        );
+        deps.log(`vector-memory: promote [${agentId}] ${resolvedId}: ${currentTier} → ${newTier}`);
         return {
           content: [
             {
               type: "text",
-              text: `Promoted memory ${memoryId.slice(0, 8)}: ${currentTier} → ${newTier}`,
+              text: `Promoted memory ${resolvedId}: ${currentTier} → ${newTier}`,
             },
           ],
-          details: { action: "promote", id: memoryId, from: currentTier, to: newTier, agentId },
+          details: { action: "promote", id: resolvedId, from: currentTier, to: newTier, agentId },
         };
       } catch (err) {
         deps.log(`vector-memory: promote tool error [${agentId}]: ${String(err)}`);
@@ -1099,7 +1176,9 @@ export function createArchiveTool(deps: ToolDeps) {
       "Demote/archive a memory to a lower tier (core → working → peripheral). " +
       "Peripheral memories decay fastest and are deprioritized in recall.",
     parameters: Type.Object({
-      memoryId: Type.String({ description: "Memory ID to archive/demote" }),
+      memoryId: Type.String({
+        description: "Full 36-char UUID (8+ char prefix still accepted for backward compatibility)",
+      }),
       targetTier: optionalStringEnum(["working", "peripheral"] as const),
     }),
     async execute(_toolCallId: string, params: unknown) {
@@ -1108,14 +1187,27 @@ export function createArchiveTool(deps: ToolDeps) {
 
       try {
         const store = deps.storeManager.getStore(agentId);
-        const entry = await store.getById(memoryId);
-        if (!entry) {
+        const resolved = await resolveIdOrPrefix(store, memoryId);
+        if (resolved.kind === "not_found") {
           return {
             content: [{ type: "text", text: `Memory not found: ${memoryId}` }],
             details: { error: "not_found", agentId },
           };
         }
+        if (resolved.kind === "ambiguous") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Multiple memories match prefix "${memoryId}" (${resolved.candidates.length} matches). Provide a longer prefix or the full UUID.`,
+              },
+            ],
+            details: { error: "ambiguous_prefix", agentId, count: resolved.candidates.length },
+          };
+        }
 
+        const entry = resolved.entry;
+        const resolvedId = entry.id;
         const meta = parseMeta(entry);
         const currentTier = normalizeTier(meta.tier as string);
         const currentIdx = TIER_ORDER.indexOf(currentTier);
@@ -1149,19 +1241,17 @@ export function createArchiveTool(deps: ToolDeps) {
 
         meta.tier = newTier;
         meta.archived_at = Date.now();
-        await store.update(memoryId, { metadata: JSON.stringify(meta) });
+        await store.update(resolvedId, { metadata: JSON.stringify(meta) });
 
-        deps.log(
-          `vector-memory: archive [${agentId}] ${memoryId.slice(0, 8)}: ${currentTier} → ${newTier}`,
-        );
+        deps.log(`vector-memory: archive [${agentId}] ${resolvedId}: ${currentTier} → ${newTier}`);
         return {
           content: [
             {
               type: "text",
-              text: `Archived memory ${memoryId.slice(0, 8)}: ${currentTier} → ${newTier}`,
+              text: `Archived memory ${resolvedId}: ${currentTier} → ${newTier}`,
             },
           ],
-          details: { action: "archive", id: memoryId, from: currentTier, to: newTier, agentId },
+          details: { action: "archive", id: resolvedId, from: currentTier, to: newTier, agentId },
         };
       } catch (err) {
         deps.log(`vector-memory: archive tool error [${agentId}]: ${String(err)}`);
@@ -1246,7 +1336,7 @@ export function createExplainRankTool(deps: ToolDeps) {
           return [
             `${i + 1}. [${cat}][${tier}] ${truncateText(abstract, 100)}`,
             `   final=${r.score.toFixed(3)} | ${sourceLines.join(" | ")}`,
-            `   imp=${r.entry.importance.toFixed(2)} age=${ageDays}d access=${accessCount} id=${r.entry.id.slice(0, 8)}${tagsLine}`,
+            `   imp=${r.entry.importance.toFixed(2)} age=${ageDays}d access=${accessCount} id=${r.entry.id}${tagsLine}`,
           ].join("\n");
         });
 
@@ -1426,7 +1516,7 @@ export function createStoreMediaTool(deps: ToolDeps) {
               content: [
                 {
                   type: "text",
-                  text: `Similar media memory already exists: "${truncateText(existing[0].entry.text, 80)}" (id: ${existing[0].entry.id.slice(0, 8)}, similarity: ${existing[0].score.toFixed(3)})`,
+                  text: `Similar media memory already exists: "${truncateText(existing[0].entry.text, 80)}" (id: ${existing[0].entry.id}, similarity: ${existing[0].score.toFixed(3)})`,
                 },
               ],
               details: {
@@ -1462,7 +1552,7 @@ export function createStoreMediaTool(deps: ToolDeps) {
         });
 
         deps.log(
-          `vector-memory: store_media [${agentId}][${categoryLabel}] id=${entry.id.slice(0, 8)} mime=${finalMime}${mimeType !== finalMime ? ` (from ${mimeType})` : ""} multimodal=${isMultimodal}`,
+          `vector-memory: store_media [${agentId}][${categoryLabel}] id=${entry.id} mime=${finalMime}${mimeType !== finalMime ? ` (from ${mimeType})` : ""} multimodal=${isMultimodal}`,
         );
 
         const modeNote = isMultimodal ? "" : " (text-only embedding, media content not embedded)";
@@ -1470,7 +1560,7 @@ export function createStoreMediaTool(deps: ToolDeps) {
           content: [
             {
               type: "text",
-              text: `Stored media memory: [${categoryLabel}] "${truncateText(description, 60)}" (id: ${entry.id.slice(0, 8)}, type: ${finalMime}${mimeType !== finalMime ? ` (converted from ${mimeType})` : ""}${modeNote})`,
+              text: `Stored media memory: [${categoryLabel}] "${truncateText(description, 60)}" (id: ${entry.id}, type: ${finalMime}${mimeType !== finalMime ? ` (converted from ${mimeType})` : ""}${modeNote})`,
             },
           ],
           details: {
@@ -1508,7 +1598,9 @@ export function createDetailTool(deps: ToolDeps) {
       "Only use this when auto-recalled memories are clearly insufficient to answer the user's question " +
       "and you need the verbatim original text. Do NOT call this for every recalled memory.",
     parameters: Type.Object({
-      id: Type.String({ description: "Memory ID (full or first 8 characters)" }),
+      id: Type.String({
+        description: "Full 36-char UUID (8+ char prefix still accepted for backward compatibility)",
+      }),
     }),
     async execute(_toolCallId: string, params: unknown) {
       const { id } = params as { id: string };
@@ -1526,19 +1618,26 @@ export function createDetailTool(deps: ToolDeps) {
 
         const store = deps.storeManager.getStore(agentId);
 
-        // Try exact match first, then prefix match
-        let entry = await store.getById(id.trim());
-        if (!entry && id.trim().length < 36) {
-          const all = await store.listAll({ limit: 500 });
-          entry = all.find((e) => e.id.startsWith(id.trim())) ?? null;
-        }
-
-        if (!entry) {
+        const resolved = await resolveIdOrPrefix(store, id);
+        if (resolved.kind === "not_found") {
           return {
             content: [{ type: "text", text: `Memory not found: ${id}` }],
             details: { error: "not_found", id },
           };
         }
+        if (resolved.kind === "ambiguous") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Multiple memories match prefix "${id}" (${resolved.candidates.length} matches). Provide a longer prefix or the full UUID.`,
+              },
+            ],
+            details: { error: "ambiguous_prefix", count: resolved.candidates.length },
+          };
+        }
+
+        const entry = resolved.entry;
 
         let l0 = entry.text;
         let l1 = "";
