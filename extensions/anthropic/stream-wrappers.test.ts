@@ -84,27 +84,32 @@ describe("anthropic stream wrappers", () => {
     vi.restoreAllMocks();
   });
 
-  it("strips context-1m for Claude CLI or legacy token auth and warns", () => {
+  it("keeps context-1m and OAuth betas for Claude CLI or legacy token auth", () => {
     const warn = vi.spyOn(__testing.log, "warn").mockImplementation(() => undefined);
     const headers = runWrapper("sk-ant-oat01-123");
     expect(headers?.["anthropic-beta"]).toBeDefined();
     expect(headers?.["anthropic-beta"]).toContain(OAUTH_BETA);
-    expect(headers?.["anthropic-beta"]).not.toContain(CONTEXT_1M_BETA);
-    expect(warn).toHaveBeenCalledOnce();
+    // OpenClaw fork keeps context-1m for OAuth because the billing proxy
+    // accepts it regardless of client-side auth mode.
+    expect(headers?.["anthropic-beta"]).toContain(CONTEXT_1M_BETA);
+    expect(warn).not.toHaveBeenCalled();
   });
 
-  it("keeps context-1m for API key auth", () => {
+  it("keeps context-1m for API key auth and adds OAuth-required betas", () => {
     const warn = vi.spyOn(__testing.log, "warn").mockImplementation(() => undefined);
     const headers = runWrapper("sk-ant-api-123");
     expect(headers?.["anthropic-beta"]).toBeDefined();
     expect(headers?.["anthropic-beta"]).toContain(CONTEXT_1M_BETA);
+    // OpenClaw fork always injects OAuth-required betas so the billing proxy
+    // sees a consistent CLI fingerprint regardless of auth mode.
+    expect(headers?.["anthropic-beta"]).toContain(OAUTH_BETA);
     expect(warn).not.toHaveBeenCalled();
   });
 
   it("skips service_tier for OAuth token in composed stream chain", () => {
     const captured = runComposedAnthropicProviderStream("sk-ant-oat01-oauth-token");
     expect(captured.headers?.["anthropic-beta"]).toContain(OAUTH_BETA);
-    expect(captured.headers?.["anthropic-beta"]).not.toContain(CONTEXT_1M_BETA);
+    expect(captured.headers?.["anthropic-beta"]).toContain(CONTEXT_1M_BETA);
     expect(captured.payload?.service_tier).toBeUndefined();
   });
 

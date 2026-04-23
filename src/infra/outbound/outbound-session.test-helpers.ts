@@ -131,7 +131,7 @@ function resolveForumOutboundSessionRouteForTest(params: ChannelOutboundSessionR
       params.resolvedTarget.kind !== "user");
   const peerId =
     isGroup && resolvedThreadId ? buildForumGroupPeerIdForTest(chatId, resolvedThreadId) : chatId;
-  const peer: RoutePeer = {
+  const peer: { kind: "direct" | "group"; id: string } = {
     kind: isGroup ? "group" : "direct",
     id: peerId,
   };

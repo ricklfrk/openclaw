@@ -13,11 +13,16 @@ const BUNDLED_TYPED_HOOK_REGISTRATION_FILES = [
   "extensions/diffs/src/plugin.ts",
   "extensions/discord/subagent-hooks-api.ts",
   "extensions/feishu/subagent-hooks-api.ts",
+  "extensions/idle-reminder/index.ts",
   "extensions/matrix/subagent-hooks-api.ts",
   "extensions/memory-core/src/dreaming.ts",
   "extensions/memory-lancedb/index.ts",
+  "extensions/nsfw/index.ts",
+  "extensions/regex-replace/index.ts",
   "extensions/skill-workshop/index.ts",
+  "extensions/sleep-reset/index.ts",
   "extensions/thread-ownership/index.ts",
+  "extensions/vector-memory/index.ts",
 ] as const;
 const BUNDLED_TYPED_HOOK_REGISTRATION_GUARDS = {
   "extensions/acpx/index.ts": ["reply_dispatch"],
@@ -38,10 +43,20 @@ const BUNDLED_TYPED_HOOK_REGISTRATION_GUARDS = {
     "subagent_ended",
     "subagent_spawning",
   ],
+  "extensions/idle-reminder/index.ts": ["agent_end", "before_agent_start", "gateway_stop"],
   "extensions/memory-core/src/dreaming.ts": ["before_agent_reply", "gateway_start"],
   "extensions/memory-lancedb/index.ts": ["agent_end", "before_prompt_build"],
+  "extensions/nsfw/index.ts": [
+    "before_message_write",
+    "before_model_resolve",
+    "before_prompt_build",
+    "message_sending",
+  ],
+  "extensions/regex-replace/index.ts": ["before_message_write", "message_sending"],
   "extensions/skill-workshop/index.ts": ["agent_end", "before_prompt_build"],
+  "extensions/sleep-reset/index.ts": ["gateway_start", "gateway_stop"],
   "extensions/thread-ownership/index.ts": ["message_received", "message_sending"],
+  "extensions/vector-memory/index.ts": ["agent_end", "before_prompt_build"],
 } as const satisfies Record<
   (typeof BUNDLED_TYPED_HOOK_REGISTRATION_FILES)[number],
   readonly string[]
@@ -245,8 +260,16 @@ describe("plugin contract boundary invariants", () => {
   });
 
   it("keeps bundled plugin production code off legacy before_agent_start hooks", () => {
+    // OpenClaw fork allowlist: idle-reminder deliberately hooks the agent-run
+    // lifecycle (not prompt building) to stop its idle timer when a user turn
+    // begins, so the legacy before_agent_start phase is the correct seam.
+    const BEFORE_AGENT_START_ALLOWLIST = new Set<string>(["extensions/idle-reminder/index.ts"]);
     const files = listTsFiles("extensions", { excludeTests: true });
-    const offenders = files.filter((file) => readRepoSource(file).includes("before_agent_start"));
+    const offenders = files.filter(
+      (file) =>
+        !BEFORE_AGENT_START_ALLOWLIST.has(file) &&
+        readRepoSource(file).includes("before_agent_start"),
+    );
     expect(offenders).toEqual([]);
   });
 

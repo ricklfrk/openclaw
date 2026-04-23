@@ -333,6 +333,12 @@ function createChatContext(): Pick<
         },
         {
           provider: "anthropic",
+          id: "claude-opus-4-7",
+          name: "Claude Opus 4.7",
+          input: ["text", "image"],
+        },
+        {
+          provider: "anthropic",
           id: "claude-opus-4-6",
           name: "Claude Opus 4.6",
           input: ["text", "image"],

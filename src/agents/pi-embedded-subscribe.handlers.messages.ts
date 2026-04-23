@@ -673,11 +673,11 @@ export function handleMessageEnd(
   // When the model omits <final> tags in a short reply (non-enforcement mode),
   // fall back to the raw text. In enforceFinalTag mode we must NOT fall back.
   if (!cleanedText && !hasMedia && !ctx.params.enforceFinalTag) {
-    const rawTrimmed = coerceText(rawText).trim();
+    const rawTrimmed = rawText.trim();
     const rawStrippedFinal = rawTrimmed.replace(/<\s*\/?\s*final\s*>/gi, "").trim();
     const rawCandidate = rawStrippedFinal || rawTrimmed;
     if (rawCandidate) {
-      const parsedFallback = parseReplyDirectives(stripTrailingDirective(rawCandidate));
+      const parsedFallback = parseReplyDirectives(splitTrailingDirective(rawCandidate).text);
       cleanedText = parsedFallback.text ?? rawCandidate;
       ({ mediaUrls, hasMedia } = resolveSendableOutboundReplyParts(parsedFallback));
     }

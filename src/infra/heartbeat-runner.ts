@@ -1292,10 +1292,10 @@ export async function runHeartbeatOnce(opts: {
 
     // Sanitize reasoning payloads to strip internal model tags before delivery.
     const sanitizedReasoningPayloads = reasoningPayloads
-      .map((rp) => ({
-        ...rp,
-        text: rp.text ? sanitizeUserFacingText(rp.text) : rp.text,
-      }))
+      .map((rp) => {
+        const sanitized = rp.text ? sanitizeUserFacingText(rp.text) : rp.text;
+        return Object.assign({}, rp, { text: sanitized });
+      })
       .filter((rp) => rp.text?.trim());
 
     await deliverOutboundPayloads({

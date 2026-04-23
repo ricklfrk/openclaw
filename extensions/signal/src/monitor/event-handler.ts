@@ -909,7 +909,7 @@ export function createSignalEventHandler(
       }
       placeholder = enhanced.placeholder;
     } else {
-      bodyText = messageText || placeholder || dataMessage.quote?.text?.trim() || "";
+      bodyText = messageText || placeholder || visibleQuoteText || "";
     }
     if (!bodyText) {
       return;

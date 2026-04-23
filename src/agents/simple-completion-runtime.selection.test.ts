@@ -81,8 +81,8 @@ describe("resolveSimpleCompletionSelectionForAgent", () => {
     const selection = resolveSimpleCompletionSelectionForAgent({ cfg, agentId: "main" });
     expect(selection).toEqual(
       expect.objectContaining({
-        provider: "openai",
-        modelId: "gpt-5.4",
+        provider: "anthropic",
+        modelId: "claude-opus-4-7",
       }),
     );
   });
@@ -118,7 +118,7 @@ describe("resolveSimpleCompletionSelectionForAgent", () => {
     expect(selection).toEqual(
       expect.objectContaining({
         provider: "openai",
-        modelId: "gpt-5.4",
+        modelId: "gpt-5",
       }),
     );
   });

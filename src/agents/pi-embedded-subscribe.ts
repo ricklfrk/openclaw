@@ -593,7 +593,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
 
     // If orphaned </think> found, skip everything before it
     const thinkInput = lastOrphanedCloseEnd > 0 ? repaired.slice(lastOrphanedCloseEnd) : repaired;
-    const thinkOffset = lastOrphanedCloseEnd > 0 ? lastOrphanedCloseEnd : 0;
+    const thinkOffset = Math.max(lastOrphanedCloseEnd, 0);
 
     // Pass 2: thinking tag processing
     let processed = "";

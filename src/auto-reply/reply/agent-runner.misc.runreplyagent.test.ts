@@ -1025,7 +1025,7 @@ describe("runReplyAgent Active Memory inline debug", () => {
     expect(traceText).toContain("🔎 Model Input (User Role):");
     expect(traceText).toContain("🔎 Model Output (Assistant Role):");
     expect(traceText).toContain(
-      "Summary: winner=claude 🧠 low fallback=yes attempts=2 stop=end_turn prompt=1.9k/200k ⬇️ 1.2k ⬆️ 45 ♻️ 800 🆕 200 🔢 2.2k tools=2 compactions=1",
+      "Summary: winner=claude 🧠 low fallback=yes attempts=2 stop=end_turn prompt=1.9k/1.0m ⬇️ 1.2k ⬆️ 45 ♻️ 800 🆕 200 🔢 2.2k tools=2 compactions=1",
     );
     expect(traceText.indexOf("🔎 Execution Result:")).toBeGreaterThan(
       traceText.indexOf("🔎 Context Window (Last Model Request):"),

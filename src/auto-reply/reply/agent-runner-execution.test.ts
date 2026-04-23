@@ -117,6 +117,10 @@ vi.mock("./agent-runner-utils.js", () => ({
   }),
   resolveQueuedReplyRuntimeConfig: <T>(config: T) => config,
   resolveModelFallbackOptions: vi.fn(() => ({})),
+  resolveFallbackRetryPrompt: (params: { body: string; isFallbackRetry: boolean }) =>
+    params.isFallbackRetry
+      ? "Continue where you left off. The previous model attempt failed or timed out."
+      : params.body,
 }));
 
 vi.mock("./reply-delivery.js", () => ({

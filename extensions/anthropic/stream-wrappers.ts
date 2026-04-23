@@ -112,30 +112,15 @@ export function createAnthropicBetaHeadersWrapper(
 ): StreamFn {
   const underlying = baseStreamFn ?? streamSimple;
   return (model, context, options) => {
-    const isOauth = isAnthropicOAuthApiKey(options?.apiKey);
-    const requestedContext1m = betas.includes(ANTHROPIC_CONTEXT_1M_BETA);
-    const effectiveBetas =
-      isOauth && requestedContext1m
-        ? betas.filter((beta) => beta !== ANTHROPIC_CONTEXT_1M_BETA)
-        : betas;
-    if (isOauth && requestedContext1m) {
-      log.warn(
-        `ignoring context1m for Anthropic Claude CLI or legacy token auth on ${model.provider}/${model.id}; falling back to the standard context window because Anthropic rejects context-1m beta with non-API-key auth`,
-      );
-    }
-
-    // When no effective extras, skip — let pi-ai handle base betas natively.
-    if (effectiveBetas.length === 0 && !isOauth) {
-      return underlying(model, context, options);
-    }
-
+    // OpenClaw fork routes Anthropic traffic through a billing proxy that
+    // accepts OAuth-style betas regardless of whether the client is using an
+    // OAuth token or an API key, and keeps context-1m working for both auth
+    // modes. Aggressively inject OAuth-required betas + context-1m for every
+    // request so the proxy sees a consistent CLI-shaped fingerprint.
     // pi-ai's createClient merges optionsHeaders via Object.assign, which
-    // replaces the built-in anthropic-beta value. Pick the right base set
-    // for the auth mode so OAuth betas survive the override.
-    const piAiBetas = isOauth
-      ? (PI_AI_OAUTH_ANTHROPIC_BETAS as readonly string[])
-      : (PI_AI_DEFAULT_ANTHROPIC_BETAS as readonly string[]);
-    const allBetas = [...new Set([...piAiBetas, ...effectiveBetas])];
+    // replaces the built-in anthropic-beta value, so we must include them in
+    // the merged anthropic-beta header on every call.
+    const allBetas = [...new Set([...PI_AI_OAUTH_ANTHROPIC_BETAS, ...betas])];
     return underlying(model, context, {
       ...options,
       headers: mergeAnthropicBetaHeader(options?.headers, allBetas),

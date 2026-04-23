@@ -91,7 +91,7 @@ const ANTHROPIC_DEFAULT_BETAS = [
   "interleaved-thinking-2025-05-14",
 ];
 const ANTHROPIC_CONTEXT_1M_BETA = "context-1m-2025-08-07";
-const ANTHROPIC_OAUTH_BETAS = ["oauth-2025-04-20", "claude-code-20250219"];
+const ANTHROPIC_OAUTH_BETAS = ["claude-code-20250219", "oauth-2025-04-20"];
 
 const XAI_FAST_MODEL_IDS = new Map<string, string>([
   ["grok-3", "grok-3-fast"],
@@ -227,14 +227,21 @@ function isDirectAnthropicModel(model: { provider?: string; baseUrl?: string }):
 function createAnthropicBetaHeadersWrapper(baseStreamFn: StreamFn | undefined, betas: string[]) {
   const underlying = baseStreamFn ?? (() => ({}) as ReturnType<StreamFn>);
   return ((model, context, options) => {
-    const nextBetas = isAnthropicOauthApiKey(options?.apiKey)
-      ? [...ANTHROPIC_OAUTH_BETAS, ...betas.filter((beta) => beta !== ANTHROPIC_CONTEXT_1M_BETA)]
-      : betas;
+    // Mirror the fork's extension wrapper: always inject OAuth-required betas
+    // and keep context-1m regardless of auth mode so the billing proxy sees a
+    // consistent CLI-shaped fingerprint.
+    const allBetas = [...new Set([...ANTHROPIC_OAUTH_BETAS, ...ANTHROPIC_DEFAULT_BETAS, ...betas])];
     const existingBeta =
       typeof options?.headers?.["anthropic-beta"] === "string"
         ? options.headers["anthropic-beta"]
         : "";
-    const betaHeader = [...(existingBeta ? [existingBeta] : []), ...nextBetas].join(",");
+    const existingList = existingBeta
+      ? existingBeta
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean)
+      : [];
+    const betaHeader = [...new Set([...existingList, ...allBetas])].join(",");
     return underlying(model, context, {
       ...options,
       headers: {

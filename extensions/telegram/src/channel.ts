@@ -26,7 +26,6 @@ import {
   resolveOutboundSendDep,
   type OutboundSendDeps,
 } from "openclaw/plugin-sdk/outbound-runtime";
-import { type RoutePeer } from "openclaw/plugin-sdk/routing";
 import {
   createComputedAccountStatusAdapter,
   createDefaultChannelRuntimeState,
@@ -468,7 +467,7 @@ function resolveTelegramOutboundSessionRoute(params: {
       params.resolvedTarget.kind !== "user");
   const peerId =
     isGroup && resolvedThreadId ? buildTelegramGroupPeerId(chatId, resolvedThreadId) : chatId;
-  const peer: RoutePeer = {
+  const peer: { kind: "direct" | "group"; id: string } = {
     kind: isGroup ? "group" : "direct",
     id: peerId,
   };

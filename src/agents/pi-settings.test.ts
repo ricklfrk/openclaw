@@ -36,8 +36,8 @@ describe("applyPiCompactionSettingsFromConfig", () => {
     const settingsManager = {
       getCompactionReserveTokens: () => reserve,
       getCompactionKeepRecentTokens: () => keep,
-      applyOverrides: vi.fn((overrides: { compaction: { reserveTokens?: number } }) => {
-        if (overrides.compaction.reserveTokens !== undefined) {
+      applyOverrides: vi.fn((overrides: { compaction?: { reserveTokens?: number } }) => {
+        if (overrides.compaction?.reserveTokens !== undefined) {
           reserve = overrides.compaction.reserveTokens;
         }
       }),

@@ -46,7 +46,7 @@ function extractJsonFromResponse(text: string): string | null {
   if (lastBrace === -1) {
     return null;
   }
-  return text.substring(firstBrace, lastBrace + 1);
+  return text.slice(firstBrace, lastBrace + 1);
 }
 
 function previewText(value: string, maxLen = 200): string {

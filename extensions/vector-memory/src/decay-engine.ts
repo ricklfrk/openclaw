@@ -115,7 +115,7 @@ export function createDecayEngine(config: DecayConfig = DEFAULT_DECAY_CONFIG): D
     const effectiveHL = halfLife * Math.exp(mu * memory.importance);
     const lambda = Math.LN2 / effectiveHL;
     const beta = getTierBeta(memory.tier);
-    return Math.exp(-lambda * Math.pow(daysSince, beta));
+    return Math.exp(-lambda * daysSince ** beta);
   }
 
   function frequency(memory: DecayableMemory): number {

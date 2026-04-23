@@ -13,6 +13,13 @@ const OPTIONAL_UNDECLARED_RUNTIME_IMPORTS = new Map<string, Set<string>>([
     // fallback for users who install it themselves.
     new Set(["@discordjs/opus"]),
   ],
+  [
+    "extensions/vector-memory",
+    // sharp is only used for on-the-fly WebP/GIF → JPEG conversion when feeding
+    // Gemini Embedding 2. It's loaded dynamically from the root node_modules if
+    // present; the extension degrades gracefully without it.
+    new Set(["sharp"]),
+  ],
 ]);
 const INDIRECT_RUNTIME_DEPENDENCIES = new Map<string, Set<string>>([
   [

@@ -90,8 +90,8 @@ describe("media-generation runtime shared candidates", () => {
     });
 
     expect(candidates).toEqual([
-      { provider: "openai", model: "gpt-image-1" },
       { provider: "fal", model: "fal-ai/flux/dev" },
+      { provider: "openai", model: "gpt-image-1" },
     ]);
   });
 

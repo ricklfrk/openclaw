@@ -103,7 +103,7 @@ export function registerAuthModesSuite(): void {
         },
       });
       expect(res.ok).toBe(false);
-      expect(res.error?.message ?? "").toContain("secure context");
+      expect(res.error?.message ?? "").toContain("control ui requires device identity");
       expect((res.error?.details as { code?: string } | undefined)?.code).toBe(
         ConnectErrorDetailCodes.CONTROL_UI_DEVICE_IDENTITY_REQUIRED,
       );

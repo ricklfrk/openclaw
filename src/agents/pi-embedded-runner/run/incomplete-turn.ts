@@ -170,8 +170,7 @@ export function resolveIncompleteTurnPayloadText(params: {
     params.attempt.clientToolCall ||
     params.attempt.yieldDetected ||
     params.attempt.didSendDeterministicApprovalPrompt ||
-    params.attempt.lastToolError ||
-    params.attempt.didSendViaMessagingTool
+    params.attempt.lastToolError
   ) {
     return null;
   }

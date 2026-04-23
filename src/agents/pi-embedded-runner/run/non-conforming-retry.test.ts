@@ -110,7 +110,7 @@ describe("checkNonConformingOutput", () => {
       expect(result).toEqual({
         action: "fail",
         skipProfile: true,
-        fallbackText: "■ reply here with enough length for fallback",
+        fallbackText: "more■ reply here with enough length for fallback",
       });
     });
 

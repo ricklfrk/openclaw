@@ -63,7 +63,12 @@ describe("heartbeat per-peer session resolution", () => {
 
         await runHeartbeatOnce({
           cfg,
-          deps: { whatsapp: sendWhatsApp as unknown, getQueueSize: () => 0, nowMs: () => 0 },
+          deps: {
+            whatsapp: sendWhatsApp as unknown,
+            getQueueSize: () => 0,
+            nowMs: () => 0,
+            getReplyFromConfig: replySpy,
+          },
         });
 
         expect(replySpy).toHaveBeenCalledWith(
@@ -115,7 +120,12 @@ describe("heartbeat per-peer session resolution", () => {
 
         await runHeartbeatOnce({
           cfg,
-          deps: { whatsapp: sendWhatsApp as unknown, getQueueSize: () => 0, nowMs: () => 0 },
+          deps: {
+            whatsapp: sendWhatsApp as unknown,
+            getQueueSize: () => 0,
+            nowMs: () => 0,
+            getReplyFromConfig: replySpy,
+          },
         });
 
         expect(replySpy).toHaveBeenCalledWith(
@@ -161,7 +171,12 @@ describe("heartbeat per-peer session resolution", () => {
 
         await runHeartbeatOnce({
           cfg,
-          deps: { whatsapp: sendWhatsApp as unknown, getQueueSize: () => 0, nowMs: () => 0 },
+          deps: {
+            whatsapp: sendWhatsApp as unknown,
+            getQueueSize: () => 0,
+            nowMs: () => 0,
+            getReplyFromConfig: replySpy,
+          },
         });
 
         expect(replySpy).toHaveBeenCalledWith(

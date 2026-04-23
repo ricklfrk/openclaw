@@ -372,8 +372,7 @@ export class MemoryRetriever {
 
     let mapped = filtered.map(
       (result, index) =>
-        ({
-          ...result,
+        Object.assign({}, result, {
           sources: { vector: { score: result.score, rank: index + 1 } },
         }) as RetrievalResult,
     );
@@ -446,7 +445,7 @@ export class MemoryRetriever {
   ): Promise<Array<MemorySearchResult & { rank: number }>> {
     const results = await this.store.vectorSearch(queryVector, limit, 0.1);
     const filtered = category ? results.filter((r) => r.entry.category === category) : results;
-    return filtered.map((result, index) => ({ ...result, rank: index + 1 }));
+    return filtered.map((result, index) => Object.assign({}, result, { rank: index + 1 }));
   }
 
   private async runBM25Search(
@@ -456,7 +455,7 @@ export class MemoryRetriever {
   ): Promise<Array<MemorySearchResult & { rank: number }>> {
     const results = await this.store.bm25Search(query, limit);
     const filtered = category ? results.filter((r) => r.entry.category === category) : results;
-    return filtered.map((result, index) => ({ ...result, rank: index + 1 }));
+    return filtered.map((result, index) => Object.assign({}, result, { rank: index + 1 }));
   }
 
   // --------------------------------------------------------------------------
@@ -564,15 +563,20 @@ export class MemoryRetriever {
                   item.score * 0.6 + original.score * 0.4,
                   floor,
                 );
-                return {
-                  ...original,
+                return Object.assign({}, original, {
                   score: blendedScore,
-                  sources: { ...original.sources, reranked: { score: item.score } },
-                };
+                  sources: Object.assign({}, original.sources, {
+                    reranked: { score: item.score },
+                  }),
+                });
               });
             const unreturned = results
               .filter((_, idx) => !returnedIndices.has(idx))
-              .map((r) => ({ ...r, score: clamp01WithFloor(r.score * 0.8, r.score * 0.5) }));
+              .map((r) =>
+                Object.assign({}, r, {
+                  score: clamp01WithFloor(r.score * 0.8, r.score * 0.5),
+                }),
+              );
             return [...reranked, ...unreturned].toSorted((a, b) => b.score - a.score);
           }
         }
