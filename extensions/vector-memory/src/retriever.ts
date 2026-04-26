@@ -55,11 +55,12 @@ export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
   bm25Weight: 0.3,
   minScore: 0.3,
   rerank: "cross-encoder",
-  // Tuned for prompt-time latency: rerank cost is linear in pool size
-  // (~28ms/doc for local-onnx bge-reranker-v2-m3 q8 on Apple Silicon
-  // CPU). A pool of 10 keeps p95 under ~300ms while still giving the
-  // reranker enough candidates to meaningfully reorder.
-  candidatePoolSize: 10,
+  // Rerank cost is linear in pool size. For real Chinese memories on
+  // local-onnx bge-reranker-v2-m3 q8 (Apple Silicon CPU), each doc is
+  // ~80ms, so pool=8 lands rerank at ~640ms wall time — the sweet spot
+  // between "reranker has enough candidates to actually reorder" and
+  // "prompt build stays under ~1s total end-to-end".
+  candidatePoolSize: 8,
   recencyHalfLifeDays: 14,
   recencyWeight: 0.1,
   filterNoise: true,
@@ -466,7 +467,14 @@ export class MemoryRetriever {
       return vs >= 0.45 || bs >= 0.5;
     });
 
-    const rerankInput = fusedResults.slice(0, limit * 2);
+    // Rerank sees the FULL candidate pool (up to candidatePoolSize),
+    // not just limit*2. The whole point of retrieve-then-rerank is to
+    // use a cheap fusion stage to surface diverse candidates and then
+    // let the expensive cross-encoder re-order them. Before, only the
+    // top limit*2 got reranked, which meant candidates 7–N from fusion
+    // never had a chance to move into the final top-K no matter how
+    // relevant the reranker would have scored them.
+    const rerankInput = fusedResults.slice(0, this.config.candidatePoolSize);
     const tRerank = performance.now();
     let reranked =
       this.config.rerank !== "none"

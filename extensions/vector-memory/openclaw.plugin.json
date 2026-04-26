@@ -110,8 +110,8 @@
             "type": "integer",
             "minimum": 5,
             "maximum": 100,
-            "default": 10,
-            "description": "Candidates pulled from vector+BM25 fusion before rerank. Linear in rerank cost (e.g. local-onnx ~28ms/doc). Default 10 keeps p95 rerank latency under ~300ms; raise to 20 only if you can afford the extra ~300ms per recall."
+            "default": 8,
+            "description": "Candidates pulled from vector+BM25 fusion and fed into rerank. Rerank sees the whole pool, so latency is linear in this number (~80ms/doc on local-onnx bge-reranker-v2-m3 q8, Apple Silicon CPU). Default 8 keeps rerank wall time around 600ms; raise for better ranking quality at higher prompt-build cost."
           },
           "recencyHalfLifeDays": { "type": "number", "minimum": 0, "maximum": 365, "default": 14 },
           "recencyWeight": { "type": "number", "minimum": 0, "maximum": 0.5, "default": 0.1 },
