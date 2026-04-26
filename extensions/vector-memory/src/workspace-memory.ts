@@ -25,6 +25,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import { chunkDocument, type ChunkerConfig } from "./chunker.js";
 import type { Embedder } from "./embedder.js";
+import { neutralizeRecalledMediaRefs } from "./neutralize-media-refs.js";
 import { rerankPassages, type RerankPassagesConfig } from "./rerank-shared.js";
 import type { MemoryEntry, MemorySearchResult, MemoryStore } from "./store.js";
 import { stripRelevantMemoriesFromText } from "./strip-old-injections.js";
@@ -162,19 +163,28 @@ export const DEFAULT_DAILY_SCOPE: DailyScopeConfig = {
  *      `evidence: memory/...md:4-5` lines that match almost every query
  *      via BM25 (keywords like "Candidate", "confidence", "evidence")
  *      without carrying real memory content.
+ *      The now-empty `## Light Sleep` / `## REM Sleep` headings are stripped
+ *      too, otherwise some daily files become heading-only chunks.
  *   2. Labelled untrusted-metadata JSON blocks emitted by channels
  *      (Signal / Discord / etc) when a message is quoted into daily
  *      notes — e.g. `Conversation info (untrusted …): ```json {…} ```.`
- *      These carry `message_id` / `sender_id` / `e164` etc, which are
- *      useless for recall and skew BM25 toward channel ID noise.
+ *      These carry noisy IDs, but `sender` + `timestamp` are useful
+ *      attribution, so we compact them into `sender(timestamp): `.
  *   3. Bare `{ "message_id": …, "sender_id": … }` JSON fences that some
- *      raw session dumps include without the preceding label.
+ *      raw session dumps include without the preceding label. If they include
+ *      sender/timestamp, compact them the same way; otherwise strip them.
  *   4. Nested `<relevant-memories>` blocks accidentally captured into daily
  *      journals. These are recalled memories of recalled memories and should
  *      never be embedded, BM25-indexed, reranked, or injected again.
- *   5. Media resend boilerplate injected near attachment breadcrumbs. It is
+ *   5. Heartbeat self-check boilerplate, previous-message replay blocks,
+ *      queued-message wrapper lines, system status lines, and no-op replies.
+ *      These are scheduler/channel mechanics, not user memory.
+ *   6. Media resend boilerplate injected near attachment breadcrumbs. It is
  *      an instruction for the assistant UI, not memory content, and it
  *      pollutes both BM25 and reranker passages.
+ *   7. Raw historical media markers (`[media attached: …]` /
+ *      `[Image: source: …]`) are rewritten into explicit historical refs so
+ *      paths stay available without looking like live attachments.
  *
  * We preserve the **original line count** by replacing each matched
  * region with as many `\n` as it contained. This keeps `line_start` /
@@ -183,14 +193,45 @@ export const DEFAULT_DAILY_SCOPE: DailyScopeConfig = {
  * match what the user sees in their editor.
  */
 export function stripIndexNoise(text: string): string {
-  const preserveLines = (match: string): string => {
+  const countNewlines = (match: string): number => {
     let n = 0;
     for (let i = 0; i < match.length; i++) {
       if (match.charCodeAt(i) === 10) {
         n++;
       }
     }
+    return n;
+  };
+  const preserveLines = (match: string): string => {
+    const n = countNewlines(match);
     return n > 0 ? "\n".repeat(n) : "";
+  };
+  const preserveLinesThenPrefix = (match: string, prefix: string): string =>
+    `${preserveLines(match)}${prefix}`;
+  const parseObject = (json: string): Record<string, unknown> | null => {
+    try {
+      const parsed = JSON.parse(json) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  };
+  const attributionFromMetadata = (
+    primary: Record<string, unknown> | null,
+    senderMeta?: Record<string, unknown> | null,
+  ): string | null => {
+    const sender =
+      (typeof primary?.sender === "string" && primary.sender.trim()) ||
+      (typeof senderMeta?.name === "string" && senderMeta.name.trim()) ||
+      (typeof senderMeta?.label === "string" && senderMeta.label.trim()) ||
+      "";
+    const timestamp = typeof primary?.timestamp === "string" ? primary.timestamp.trim() : "";
+    if (!sender || !timestamp) {
+      return null;
+    }
+    return `${sender}(${timestamp}): `;
   };
   let out = text.replace(
     /<!-- openclaw:dreaming:[a-z]+:start -->[\s\S]*?<!-- openclaw:dreaming:[a-z]+:end -->/g,
@@ -208,23 +249,60 @@ export function stripIndexNoise(text: string): string {
   // Orphan closer left behind when the matching start was trimmed earlier.
   out = out.replace(/<!-- openclaw:dreaming:[a-z]+:end -->\n?/g, preserveLines);
   out = out.replace(
-    /(?:Conversation info|Sender|Replied message)\s*\(untrusted[^)]*\):\s*```json\s*\{[\s\S]*?\}\s*```/g,
+    /Conversation info\s*\(untrusted[^)]*\):\s*```json\s*(\{[\s\S]*?\})\s*```\s*(?:Sender\s*\(untrusted[^)]*\):\s*```json\s*(\{[\s\S]*?\})\s*```\s*)?/g,
+    (match, conversationJson: string, senderJson: string | undefined) => {
+      const attribution = attributionFromMetadata(
+        parseObject(conversationJson),
+        senderJson ? parseObject(senderJson) : null,
+      );
+      return attribution ? preserveLinesThenPrefix(match, attribution) : preserveLines(match);
+    },
+  );
+  out = out.replace(
+    /(?:Sender|Replied message|Conversation info)\s*\(untrusted[^)]*\):\s*```json\s*\{[\s\S]*?\}\s*```/g,
     preserveLines,
   );
   out = out.replace(
-    /```json\s*\{[^}]*"message_id"\s*:[^}]*"sender_id"\s*:[^}]*\}\s*```/g,
-    preserveLines,
+    /```json\s*(\{[^}]*"message_id"\s*:[^}]*"sender_id"\s*:[^}]*\})\s*```\s*/g,
+    (match, json: string) => {
+      const attribution = attributionFromMetadata(parseObject(json));
+      return attribution ? preserveLinesThenPrefix(match, attribution) : preserveLines(match);
+    },
   );
   out = out.replace(
     /<relevant-memories\b[^>]*>[\s\S]*?<\/relevant-memories>\n{0,2}/gi,
     preserveLines,
   );
   out = stripRecallBoilerplate(out, preserveLines);
+  out = neutralizeRecalledMediaRefs(out);
   return out;
 }
 
 const IMAGE_RESEND_BOILERPLATE_PATTERN =
   /To send an image back,\s*prefer the message tool \(media\/path\/filePath\)\.\s*If you must inline,\s*use MEDIA:https:\/\/example\.com\/image(?:\.jpg)?\.[\s\S]{0,700}?Keep caption in the text body\./g;
+const HEARTBEAT_FOLLOW_UP_PROMPT_PATTERN =
+  /Check if there's anything you should follow up on with the user\. Say it, then DO it — words without action = nothing happened\. If nothing to follow up, reply HEARTBEAT_OK\./g;
+const HEARTBEAT_READ_PROMPT_WITH_TIME_PATTERN =
+  /Read HEARTBEAT\.md if it exists[\s\S]{0,900}?Current time:[^\n]*/g;
+const HEARTBEAT_READ_PROMPT_PATTERN =
+  /Read HEARTBEAT\.md if it exists[\s\S]{0,500}?reply HEARTBEAT_OK\./g;
+const NO_OP_ASSISTANT_LINE_PATTERN =
+  /^(?:assistant:\s*)?(?:<final>\s*)?(?:(?:HEARTBEAT_OK|NO_REPLY)\s*)+(?:<\/(?:final|think)>)?\s*$/gm;
+const PREVIOUS_MESSAGES_REPLAY_PATTERN =
+  /^(?:user:\s*)?Here are the previous last \d+ messages:\s*\n"""[\s\S]*?\n"""\n?/gm;
+const QUEUED_MESSAGES_WRAPPER_PATTERN =
+  /^(?:user:\s*)?\[Queued messages while agent was busy\]\s*\n---\s*\nQueued #\d+\s*$/gm;
+const SYSTEM_STATUS_LINE_PATTERN = /^(?:user:\s*)?System(?:\s*\(untrusted\))?:\s*\[[^\n]+\].*$/gm;
+const PRE_COMPACTION_MEMORY_FLUSH_PATTERN =
+  /^(?:user:\s*)?Pre-compaction memory flush\.[^\n]*\nCurrent time:[^\n]*$/gm;
+const ASSISTANT_FINAL_OPEN_LINE_PATTERN = /^assistant:\s*<final>\s*$/gm;
+const THINK_BLOCK_PATTERN = /^(?:assistant:\s*)?<think>[\s\S]*?<\/think>\s*/gm;
+const INLINE_NO_OP_FINAL_PATTERN =
+  /^assistant:\s*<final>\s*(?:HEARTBEAT_OK|NO_REPLY)\s*<\/final>\s*(?:HEARTBEAT_OK|NO_REPLY)?\s*$/gm;
+const INLINE_FINAL_PATTERN = /<final>\s*([\s\S]*?)\s*<\/final>/g;
+const FINAL_CLOSE_LINE_PATTERN = /^<\/final>\s*$/gm;
+const DREAM_SECTION_HEADING_PATTERN = /^##\s+(?:Light|REM|Deep)\s+Sleep\s*$/gm;
+const MESSAGE_ID_LINE_PATTERN = /^\[message_id:\s*[^\]]+\]\s*$/gm;
 
 /**
  * Remove assistant-facing boilerplate from recalled passages before rerank and
@@ -235,11 +313,36 @@ export function stripRecallBoilerplate(
   text: string,
   replace: (match: string) => string = () => "",
 ): string {
-  return text.replace(IMAGE_RESEND_BOILERPLATE_PATTERN, replace);
+  return text
+    .replace(IMAGE_RESEND_BOILERPLATE_PATTERN, replace)
+    .replace(PREVIOUS_MESSAGES_REPLAY_PATTERN, replace)
+    .replace(QUEUED_MESSAGES_WRAPPER_PATTERN, replace)
+    .replace(SYSTEM_STATUS_LINE_PATTERN, replace)
+    .replace(PRE_COMPACTION_MEMORY_FLUSH_PATTERN, replace)
+    .replace(THINK_BLOCK_PATTERN, replace)
+    .replace(INLINE_NO_OP_FINAL_PATTERN, replace)
+    .replace(ASSISTANT_FINAL_OPEN_LINE_PATTERN, "assistant:")
+    .replace(INLINE_FINAL_PATTERN, (_match, body: string) => body.trim())
+    .replace(FINAL_CLOSE_LINE_PATTERN, replace)
+    .replace(HEARTBEAT_READ_PROMPT_WITH_TIME_PATTERN, replace)
+    .replace(HEARTBEAT_READ_PROMPT_PATTERN, replace)
+    .replace(DREAM_SECTION_HEADING_PATTERN, replace)
+    .replace(MESSAGE_ID_LINE_PATTERN, replace)
+    .replace(HEARTBEAT_FOLLOW_UP_PROMPT_PATTERN, replace)
+    .replace(NO_OP_ASSISTANT_LINE_PATTERN, replace);
+}
+
+function compactRecallWhitespace(text: string): string {
+  return text
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 export function stripRecallNoiseForPrompt(text: string): string {
-  return stripRecallBoilerplate(stripRelevantMemoriesFromText(text));
+  return compactRecallWhitespace(
+    neutralizeRecalledMediaRefs(stripRecallBoilerplate(stripRelevantMemoriesFromText(text))),
+  );
 }
 
 // ============================================================================
@@ -411,7 +514,11 @@ export async function indexFile(
   // Normalize the markdown as soon as it is loaded. Everything downstream
   // (empty-file handling, file_hash, chunking, embeddings, BM25) must see the
   // same cleaned text so recursive recall blocks never enter the index.
-  const text = stripIndexNoise(raw).trim();
+  //
+  // `stripIndexNoise` removes large machine blocks; `stripRecallNoiseForPrompt`
+  // then compacts the whitespace and removes any fragmentary prompt wrappers
+  // before chunking, so the index never stores half-stripped transcript noise.
+  const text = stripRecallNoiseForPrompt(stripIndexNoise(raw)).trim();
   if (text.length === 0) {
     // Empty file: purge any previously-indexed chunks.
     const removed = await store.deleteByMetadataKV("source_file", file.relPath);
