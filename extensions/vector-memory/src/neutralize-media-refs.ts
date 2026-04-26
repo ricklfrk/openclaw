@@ -15,10 +15,10 @@
  * effectively resurrecting months-old images into the present turn and
  * confusing the model about temporal context.
  *
- * This helper rewrites the markers into inert forms (`[archived-media-ref …]`
- * / `[archived-image-ref …]`) so the original textual information is still
- * useful to the LLM as *description*, but cannot be re-interpreted as a live
- * attachment by any downstream scanner.
+ * This helper rewrites the markers into explicit historical-reference forms
+ * (`[historical-media-ref …]` / `[historical-image-ref …]`) so the path is
+ * still available if the assistant is later asked to send the old file back,
+ * but the reference is clearly not a current-turn attachment.
  *
  * This is defence-in-depth: the pi-embedded-runner image scanner *also*
  * strips `<relevant-memories>`/`<from-*-memory>` blocks before scanning, so
@@ -31,11 +31,10 @@ const MEDIA_ATTACHED_PATTERN = /\[media attached(\s+\d+\/\d+)?:\s*([^\]]+)\]/gi;
 const MESSAGE_IMAGE_PATTERN = /\[Image:\s*source:\s*([^\]]+)\]/gi;
 
 /**
- * Rewrite live-attachment markers inside recalled memory text to inert forms.
- * The payload (path / mime / URL) is preserved verbatim inside the inert tag
- * so the LLM can still reason about *what* the historical attachment was —
- * the change is purely syntactic (different outer token) so downstream
- * regex scanners no longer match.
+ * Rewrite live-attachment markers inside recalled memory text to explicit
+ * historical forms. The payload (path / mime / URL) is preserved verbatim so
+ * the LLM can still use the path for an intentional resend via a messaging
+ * tool, while the outer marker makes clear that this is not a live attachment.
  */
 export function neutralizeRecalledMediaRefs(text: string): string {
   if (!text) {
@@ -44,9 +43,9 @@ export function neutralizeRecalledMediaRefs(text: string): string {
   return text
     .replace(MEDIA_ATTACHED_PATTERN, (_m, idx: string | undefined, body: string) => {
       const suffix = idx ? idx : "";
-      return `[archived-media-ref${suffix}: ${body.trim()}]`;
+      return `[historical-media-ref${suffix}; not-current-attachment; path-preserved-for-resend: ${body.trim()}]`;
     })
     .replace(MESSAGE_IMAGE_PATTERN, (_m, body: string) => {
-      return `[archived-image-ref: ${body.trim()}]`;
+      return `[historical-image-ref; not-current-attachment; path-preserved-for-resend: ${body.trim()}]`;
     });
 }

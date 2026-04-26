@@ -172,6 +172,22 @@ what about these images?`,
     expect(ref?.resolved).toContain("IMG_6430.jpeg");
   });
 
+  it("ignores historical media refs while preserving current-turn paths", () => {
+    const refs = expectImageReferenceCount(
+      `[historical-media-ref; not-current-attachment; path-preserved-for-resend: /Users/mea/.openclaw/media/inbound/old.jpg (image/jpeg) | /Users/mea/.openclaw/media/inbound/old.jpg]
+Current turn image: /Users/mea/.openclaw/media/inbound/current.png`,
+      1,
+    );
+
+    expect(refs[0]?.raw).toBe("/Users/mea/.openclaw/media/inbound/current.png");
+  });
+
+  it("ignores historical image refs with preserved paths", () => {
+    expectNoImageReferences(
+      "[historical-image-ref; not-current-attachment; path-preserved-for-resend: /tmp/screenshot.png]",
+    );
+  });
+
   it("ignores remote URLs entirely (local-only)", () => {
     const refs = expectImageReferenceCount(
       `To send an image: MEDIA:https://example.com/image.jpg

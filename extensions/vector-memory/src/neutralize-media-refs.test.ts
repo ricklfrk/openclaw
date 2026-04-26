@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import { neutralizeRecalledMediaRefs } from "./neutralize-media-refs.js";
 
 describe("neutralizeRecalledMediaRefs", () => {
-  it("rewrites [media attached: path (mime)] to inert form", () => {
+  it("rewrites [media attached: path (mime)] to historical reference form", () => {
     const input = "[media attached: /Users/mea/.openclaw/media/inbound/a.jpg (image/jpeg)]";
     const out = neutralizeRecalledMediaRefs(input);
     expect(out).not.toContain("[media attached:");
-    expect(out).toContain("[archived-media-ref:");
+    expect(out).toContain("[historical-media-ref;");
+    expect(out).toContain("not-current-attachment");
+    expect(out).toContain("path-preserved-for-resend");
     expect(out).toContain("/Users/mea/.openclaw/media/inbound/a.jpg");
     expect(out).toContain("image/jpeg");
   });
@@ -14,20 +16,24 @@ describe("neutralizeRecalledMediaRefs", () => {
   it("rewrites indexed form [media attached N/M: ...]", () => {
     const input = "[media attached 2/3: /tmp/photo.png (image/png)]";
     const out = neutralizeRecalledMediaRefs(input);
-    expect(out).toMatch(/^\[archived-media-ref 2\/3:/);
+    expect(out).toMatch(/^\[historical-media-ref 2\/3; not-current-attachment;/);
     expect(out).toContain("/tmp/photo.png");
   });
 
   it("rewrites gateway claim-check URIs", () => {
     const input = "[media attached: media://inbound/abc-123.png]";
     const out = neutralizeRecalledMediaRefs(input);
-    expect(out).toBe("[archived-media-ref: media://inbound/abc-123.png]");
+    expect(out).toBe(
+      "[historical-media-ref; not-current-attachment; path-preserved-for-resend: media://inbound/abc-123.png]",
+    );
   });
 
-  it("rewrites [Image: source: ...] to inert form", () => {
+  it("rewrites [Image: source: ...] to historical reference form", () => {
     const input = "[Image: source: /tmp/screenshot.png]";
     const out = neutralizeRecalledMediaRefs(input);
-    expect(out).toBe("[archived-image-ref: /tmp/screenshot.png]");
+    expect(out).toBe(
+      "[historical-image-ref; not-current-attachment; path-preserved-for-resend: /tmp/screenshot.png]",
+    );
   });
 
   it("rewrites multiple occurrences in the same string", () => {
@@ -36,8 +42,8 @@ describe("neutralizeRecalledMediaRefs", () => {
     const out = neutralizeRecalledMediaRefs(input);
     expect(out.match(/\[media attached:/g)).toBeNull();
     expect(out.match(/\[Image: source:/g)).toBeNull();
-    expect(out.match(/\[archived-media-ref:/g)).toHaveLength(2);
-    expect(out).toContain("[archived-image-ref:");
+    expect(out.match(/\[historical-media-ref/g)).toHaveLength(2);
+    expect(out).toContain("[historical-image-ref;");
   });
 
   it("leaves ordinary text untouched", () => {

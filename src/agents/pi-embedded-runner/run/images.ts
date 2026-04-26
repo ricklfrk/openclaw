@@ -46,6 +46,7 @@ const MEDIA_ATTACHED_PATH_PATTERN = new RegExp(MEDIA_ATTACHED_PATH_REGEX_SOURCE,
 const MESSAGE_IMAGE_PATTERN = new RegExp(MESSAGE_IMAGE_REGEX_SOURCE, "gi");
 const FILE_URL_PATTERN = new RegExp(FILE_URL_REGEX_SOURCE, "gi");
 const PATH_PATTERN = new RegExp(PATH_REGEX_SOURCE, "gi");
+const HISTORICAL_MEDIA_REF_PATTERN = /\[historical-(?:media|image)-ref(?:\s+\d+\/\d+)?;[^\]]*\]/gi;
 
 /**
  * Matches the opaque media URI written by the Gateway's claim-check offload:
@@ -247,6 +248,10 @@ export function stripUntrustedMemoryBlocks(prompt: string): string {
   return result;
 }
 
+function stripHistoricalMediaRefs(prompt: string): string {
+  return prompt.replace(HISTORICAL_MEDIA_REF_PATTERN, "[historical-media-ref-stripped]");
+}
+
 /**
  * Detects image references in a user prompt.
  *
@@ -266,7 +271,7 @@ export function stripUntrustedMemoryBlocks(prompt: string): string {
  * @returns Array of detected image references
  */
 export function detectImageReferences(prompt: string): DetectedImageRef[] {
-  const sanitizedPrompt = stripUntrustedMemoryBlocks(prompt);
+  const sanitizedPrompt = stripHistoricalMediaRefs(stripUntrustedMemoryBlocks(prompt));
   const refs: DetectedImageRef[] = [];
   const seen = new Set<string>();
 

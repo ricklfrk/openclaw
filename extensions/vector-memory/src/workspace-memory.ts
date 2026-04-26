@@ -168,6 +168,9 @@ export const DEFAULT_DAILY_SCOPE: DailyScopeConfig = {
  *      useless for recall and skew BM25 toward channel ID noise.
  *   3. Bare `{ "message_id": …, "sender_id": … }` JSON fences that some
  *      raw session dumps include without the preceding label.
+ *   4. Media resend boilerplate injected near attachment breadcrumbs. It is
+ *      an instruction for the assistant UI, not memory content, and it
+ *      pollutes both BM25 and reranker passages.
  *
  * We preserve the **original line count** by replacing each matched
  * region with as many `\n` as it contained. This keeps `line_start` /
@@ -208,7 +211,23 @@ export function stripIndexNoise(text: string): string {
     /```json\s*\{[^}]*"message_id"\s*:[^}]*"sender_id"\s*:[^}]*\}\s*```/g,
     preserveLines,
   );
+  out = stripRecallBoilerplate(out, preserveLines);
   return out;
+}
+
+const IMAGE_RESEND_BOILERPLATE_PATTERN =
+  /To send an image back,\s*prefer the message tool \(media\/path\/filePath\)\.\s*If you must inline,\s*use MEDIA:https:\/\/example\.com\/image(?:\.jpg)?\.[\s\S]{0,700}?Keep caption in the text body\./g;
+
+/**
+ * Remove assistant-facing boilerplate from recalled passages before rerank and
+ * prompt injection. Historical attachment paths may be useful; UI instructions
+ * about how to send them are not memory content.
+ */
+export function stripRecallBoilerplate(
+  text: string,
+  replace: (match: string) => string = () => "",
+): string {
+  return text.replace(IMAGE_RESEND_BOILERPLATE_PATTERN, replace);
 }
 
 // ============================================================================
@@ -884,6 +903,7 @@ async function expandContext(
     }
     displayText = pieces.join("\n\n");
   }
+  displayText = stripRecallBoilerplate(displayText);
 
   return {
     entry: row.entry,
