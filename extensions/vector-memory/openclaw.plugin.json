@@ -64,6 +64,20 @@
         "default": [],
         "description": "Agent IDs to exclude from auto-recall (e.g. cron, background agents)"
       },
+      "autoRecallStripOldAfterIdleMs": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 86400000,
+        "default": 300000,
+        "description": "Rolling-window strip: if the gap since the last LLM call exceeds this value, remove <relevant-memories> blocks from user messages older than autoRecallKeepRecentInjections. Default 300000 (5 min) aligns with Anthropic's default prompt-cache TTL so stripping incurs no extra cache penalty. Set to 0 to disable."
+      },
+      "autoRecallKeepRecentInjections": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 50,
+        "default": 5,
+        "description": "Keep the most-recent N user messages' <relevant-memories> injections intact during idle-based stripping."
+      },
       "extractMinMessages": { "type": "integer", "minimum": 1, "maximum": 100, "default": 4 },
       "extractMaxChars": { "type": "integer", "minimum": 256, "maximum": 100000, "default": 8000 },
       "retrieval": {
@@ -165,6 +179,160 @@
         "minimum": 5,
         "maximum": 1440,
         "default": 60
+      },
+      "workspaceMemory": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Index workspace memory/*.md (excluding daily journals) into a per-agent __workspace__ LanceDB; injected as <from-workspace-memory> in before_prompt_build.",
+        "properties": {
+          "enabled": { "type": "boolean", "default": false },
+          "memoryDir": {
+            "type": "string",
+            "default": "memory",
+            "description": "Subdirectory under the agent workspace to index. Default: 'memory' (i.e. {workspace}/memory/)."
+          },
+          "chunking": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "maxChunkSize": {
+                "type": "integer",
+                "minimum": 200,
+                "maximum": 16000,
+                "default": 2000
+              },
+              "minChunkSize": { "type": "integer", "minimum": 50, "maximum": 4000, "default": 200 },
+              "overlapSize": { "type": "integer", "minimum": 0, "maximum": 2000, "default": 200 },
+              "maxLinesPerChunk": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 500,
+                "default": 40
+              },
+              "semanticSplit": { "type": "boolean", "default": true }
+            }
+          },
+          "recall": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "candidatePool": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 },
+              "maxItems": { "type": "integer", "minimum": 1, "maximum": 20, "default": 3 },
+              "maxChars": { "type": "integer", "minimum": 64, "maximum": 8000, "default": 600 },
+              "contextWindowChunks": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10,
+                "default": 1
+              },
+              "minScore": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.3 },
+              "timeDecay": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": { "type": "boolean", "default": false },
+                  "halfLifeDays": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 3650,
+                    "default": 365
+                  }
+                }
+              }
+            }
+          },
+          "sync": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "intervalMinutes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1440,
+                "default": 10
+              },
+              "onStartup": { "type": "boolean", "default": true }
+            }
+          },
+          "excludeGlobs": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": ["memory/.archived/**", "memory/.dreams/**"],
+            "description": "Relative glob patterns (from workspace root) to skip while indexing."
+          }
+        }
+      },
+      "dailyMemory": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Index workspace memory/YYYY-MM-DD(-slug)?.md journal files into a per-agent __dailies__ LanceDB; injected as <from-daily-memory> in before_prompt_build. Uses filename-date-based time decay.",
+        "properties": {
+          "enabled": { "type": "boolean", "default": false },
+          "chunking": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "maxChunkSize": {
+                "type": "integer",
+                "minimum": 200,
+                "maximum": 16000,
+                "default": 2000
+              },
+              "minChunkSize": { "type": "integer", "minimum": 50, "maximum": 4000, "default": 200 },
+              "overlapSize": { "type": "integer", "minimum": 0, "maximum": 2000, "default": 200 },
+              "maxLinesPerChunk": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 500,
+                "default": 40
+              },
+              "semanticSplit": { "type": "boolean", "default": true }
+            }
+          },
+          "recall": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "candidatePool": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 },
+              "maxItems": { "type": "integer", "minimum": 1, "maximum": 20, "default": 3 },
+              "maxChars": { "type": "integer", "minimum": 64, "maximum": 8000, "default": 600 },
+              "contextWindowChunks": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10,
+                "default": 1
+              },
+              "minScore": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.3 },
+              "timeDecay": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": { "type": "boolean", "default": true },
+                  "halfLifeDays": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 3650,
+                    "default": 30
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": ["filename", "mtime"],
+                    "default": "filename",
+                    "description": "Where to pull the file's effective date from: 'filename' parses YYYY-MM-DD from the basename; 'mtime' uses the file's modification time."
+                  }
+                }
+              }
+            }
+          },
+          "sync": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "intervalMinutes": { "type": "integer", "minimum": 1, "maximum": 1440, "default": 5 },
+              "onStartup": { "type": "boolean", "default": true }
+            }
+          }
+        }
       }
     },
     "required": ["embedding"]

@@ -627,6 +627,69 @@ export class MemoryStore {
     }
   }
 
+  /**
+   * Bulk-add pre-built entries (ids + timestamps already set).
+   * Intended for file-derived chunks where the id encodes file+chunk index.
+   */
+  async bulkAdd(entries: MemoryEntry[]): Promise<void> {
+    if (entries.length === 0) {
+      return;
+    }
+    await this.ensureInitialized();
+    await this.runWithFileLock(async () => {
+      await this.table!.add(entries as unknown as LanceRecord[]);
+    });
+  }
+
+  /**
+   * Delete all rows whose metadata string contains `"<key>":"<value>"`.
+   * Used to purge previously-indexed chunks for a given source file
+   * before re-inserting fresh chunks.
+   */
+  async deleteByMetadataKV(key: string, value: string): Promise<number> {
+    await this.ensureInitialized();
+    const safeKey = escapeSqlLiteral(key);
+    const safeValue = escapeSqlLiteral(value);
+    const needle = `"${safeKey}":"${safeValue}"`;
+    return this.runWithFileLock(async () => {
+      const rows = await this.table!.query()
+        .select(["id"])
+        .where(`metadata LIKE '%${needle}%'`)
+        .limit(10000)
+        .toArray();
+      if (rows.length === 0) {
+        return 0;
+      }
+      const ids = rows.map((r) => `'${escapeSqlLiteral(r.id as string)}'`).join(", ");
+      await this.table!.delete(`id IN (${ids})`);
+      return rows.length;
+    });
+  }
+
+  /**
+   * Fetch all entries whose metadata JSON contains `"<key>":"<value>"`.
+   * Cheap substring match; adequate for our unique source-file paths.
+   */
+  async findByMetadataKV(key: string, value: string, limit = 500): Promise<MemoryEntry[]> {
+    await this.ensureInitialized();
+    const safeKey = escapeSqlLiteral(key);
+    const safeValue = escapeSqlLiteral(value);
+    const needle = `"${safeKey}":"${safeValue}"`;
+    const rows = await this.table!.query()
+      .where(`metadata LIKE '%${needle}%'`)
+      .limit(limit)
+      .toArray();
+    return rows.map((row) => ({
+      id: row.id as string,
+      text: row.text as string,
+      vector: Array.from(row.vector as Iterable<number>),
+      category: row.category as MemoryEntry["category"],
+      importance: Number(row.importance),
+      timestamp: Number(row.timestamp),
+      metadata: (row.metadata as string) || "{}",
+    }));
+  }
+
   async deleteById(id: string): Promise<boolean> {
     await this.ensureInitialized();
     return this.runWithFileLock(async () => {
@@ -657,11 +720,12 @@ export class StoreManager {
     private readonly vectorDim: number,
   ) {
     // Discover existing agent DBs on disk so maintenance covers all agents,
-    // not just those accessed since the last restart.
+    // not just those accessed since the last restart. Sub-DB directories for
+    // workspace/daily scopes use a `__name__` convention and are skipped here.
     try {
       if (existsSync(basePath)) {
         for (const entry of readdirSync(basePath, { withFileTypes: true })) {
-          if (entry.isDirectory() && !entry.name.startsWith(".")) {
+          if (entry.isDirectory() && !entry.name.startsWith(".") && !entry.name.startsWith("__")) {
             this._knownAgentIds.add(entry.name);
           }
         }
@@ -672,16 +736,37 @@ export class StoreManager {
   }
 
   getStore(agentId: string): MemoryStore {
-    const existing = this.stores.get(agentId);
+    return this.getOrCreate(agentId, agentId);
+  }
+
+  /**
+   * Per-agent sub-DB for curated workspace memory
+   * (e.g. MEMORY.md, memory-*.md).
+   */
+  getWorkspaceStore(agentId: string): MemoryStore {
+    return this.getOrCreate(`${agentId}::__workspace__`, join(agentId, "__workspace__"));
+  }
+
+  /**
+   * Per-agent sub-DB for daily-dated journal files
+   * (memory/YYYY-MM-DD*.md).
+   */
+  getDailyStore(agentId: string): MemoryStore {
+    return this.getOrCreate(`${agentId}::__dailies__`, join(agentId, "__dailies__"));
+  }
+
+  private getOrCreate(cacheKey: string, relPath: string): MemoryStore {
+    const existing = this.stores.get(cacheKey);
     if (existing) {
       return existing;
     }
-
-    const dbPath = join(this.basePath, agentId);
+    const dbPath = join(this.basePath, relPath);
     validateStoragePath(dbPath);
     const store = new MemoryStore({ dbPath, vectorDim: this.vectorDim });
-    this.stores.set(agentId, store);
-    this._knownAgentIds.add(agentId);
+    this.stores.set(cacheKey, store);
+    if (!relPath.includes("__")) {
+      this._knownAgentIds.add(relPath);
+    }
     return store;
   }
 

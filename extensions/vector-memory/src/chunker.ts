@@ -100,7 +100,10 @@ function findSplitEnd(
   return safeMaxEnd;
 }
 
-function chunkDocument(text: string, config: ChunkerConfig = DEFAULT_CHUNKER_CONFIG): ChunkResult {
+export function chunkDocument(
+  text: string,
+  config: ChunkerConfig = DEFAULT_CHUNKER_CONFIG,
+): ChunkResult {
   if (!text || text.trim().length === 0) {
     return { chunks: [], totalOriginalLength: 0, chunkCount: 0 };
   }
