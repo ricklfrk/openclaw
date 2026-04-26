@@ -126,6 +126,12 @@ const bundledPluginFile = (pluginId: string, relativePath: string) =>
   `${bundledPluginRoot(pluginId)}/${relativePath}`;
 const explicitNeverBundleDependencies = [
   "@lancedb/lancedb",
+  // @huggingface/transformers -> onnxruntime-node ships a native .node binary
+  // referenced via require("../bin/napi-v6/<platform>/<arch>/onnxruntime_binding.node").
+  // Bundling the JS breaks that relative path (dist/ has no bin/ sibling),
+  // so keep it resolved via Node's module resolution from node_modules/.
+  "@huggingface/transformers",
+  "onnxruntime-node",
   "@matrix-org/matrix-sdk-crypto-nodejs",
   "matrix-js-sdk",
   ...bundledPluginRuntimeDependencies,
