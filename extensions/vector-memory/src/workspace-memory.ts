@@ -27,6 +27,7 @@ import { chunkDocument, type ChunkerConfig } from "./chunker.js";
 import type { Embedder } from "./embedder.js";
 import { rerankPassages, type RerankPassagesConfig } from "./rerank-shared.js";
 import type { MemoryEntry, MemorySearchResult, MemoryStore } from "./store.js";
+import { stripRelevantMemoriesFromText } from "./strip-old-injections.js";
 
 // ============================================================================
 // Config Types
@@ -168,7 +169,10 @@ export const DEFAULT_DAILY_SCOPE: DailyScopeConfig = {
  *      useless for recall and skew BM25 toward channel ID noise.
  *   3. Bare `{ "message_id": …, "sender_id": … }` JSON fences that some
  *      raw session dumps include without the preceding label.
- *   4. Media resend boilerplate injected near attachment breadcrumbs. It is
+ *   4. Nested `<relevant-memories>` blocks accidentally captured into daily
+ *      journals. These are recalled memories of recalled memories and should
+ *      never be embedded, BM25-indexed, reranked, or injected again.
+ *   5. Media resend boilerplate injected near attachment breadcrumbs. It is
  *      an instruction for the assistant UI, not memory content, and it
  *      pollutes both BM25 and reranker passages.
  *
@@ -211,6 +215,10 @@ export function stripIndexNoise(text: string): string {
     /```json\s*\{[^}]*"message_id"\s*:[^}]*"sender_id"\s*:[^}]*\}\s*```/g,
     preserveLines,
   );
+  out = out.replace(
+    /<relevant-memories\b[^>]*>[\s\S]*?<\/relevant-memories>\n{0,2}/gi,
+    preserveLines,
+  );
   out = stripRecallBoilerplate(out, preserveLines);
   return out;
 }
@@ -228,6 +236,10 @@ export function stripRecallBoilerplate(
   replace: (match: string) => string = () => "",
 ): string {
   return text.replace(IMAGE_RESEND_BOILERPLATE_PATTERN, replace);
+}
+
+export function stripRecallNoiseForPrompt(text: string): string {
+  return stripRecallBoilerplate(stripRelevantMemoriesFromText(text));
 }
 
 // ============================================================================
@@ -396,7 +408,10 @@ export async function indexFile(
     throw err;
   }
 
-  const text = raw.trim();
+  // Normalize the markdown as soon as it is loaded. Everything downstream
+  // (empty-file handling, file_hash, chunking, embeddings, BM25) must see the
+  // same cleaned text so recursive recall blocks never enter the index.
+  const text = stripIndexNoise(raw).trim();
   if (text.length === 0) {
     // Empty file: purge any previously-indexed chunks.
     const removed = await store.deleteByMetadataKV("source_file", file.relPath);
@@ -422,13 +437,7 @@ export async function indexFile(
     await store.deleteByMetadataKV("source_file", file.relPath);
   }
 
-  // Strip machine-generated noise (dream candidate blocks, untrusted-metadata
-  // JSON envelopes) before chunking so embeddings and BM25 index only real
-  // memory content. `stripIndexNoise` preserves newline count, so the
-  // `line_start` / `line_end` metadata still maps to the same lines in the
-  // on-disk file — users clicking `memory/xxx.md#L123` still land correctly.
-  const indexText = stripIndexNoise(text);
-  const chunked = chunkDocument(indexText, chunkingConfig);
+  const chunked = chunkDocument(text, chunkingConfig);
   if (chunked.chunks.length === 0) {
     return { indexed: false, chunks: 0 };
   }
@@ -438,12 +447,12 @@ export async function indexFile(
     let cursor = 0;
     for (const chunk of chunked.chunks) {
       const head = chunk.slice(0, Math.min(chunk.length, 60)).trimStart();
-      const found = head.length > 0 ? indexText.indexOf(head, cursor) : cursor;
+      const found = head.length > 0 ? text.indexOf(head, cursor) : cursor;
       const startOffset = found >= 0 ? found : cursor;
-      const endOffset = Math.min(indexText.length, startOffset + chunk.length);
+      const endOffset = Math.min(text.length, startOffset + chunk.length);
       lineRanges.push({
-        start: countLinesUpTo(indexText, startOffset),
-        end: countLinesUpTo(indexText, endOffset),
+        start: countLinesUpTo(text, startOffset),
+        end: countLinesUpTo(text, endOffset),
       });
       cursor = Math.max(
         cursor,
@@ -903,7 +912,7 @@ async function expandContext(
     }
     displayText = pieces.join("\n\n");
   }
-  displayText = stripRecallBoilerplate(displayText);
+  displayText = stripRecallNoiseForPrompt(displayText);
 
   return {
     entry: row.entry,
