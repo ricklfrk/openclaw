@@ -63,8 +63,8 @@ export function pendingResetDir(): string {
 /**
  * Map a `sessionKey` to its flag file path. Session keys can contain any
  * ASCII character (colons, slashes, dots), so we URI-encode to produce a
- * safe single-segment filename. Keep this synced with
- * `extensions/sleep-reset/src/flag.ts`.
+ * safe single-segment filename. Keep this synced with sleep-reset's own
+ * copy of the path helper (in that plugin's `flag.ts`).
  */
 export function pendingResetFlagPath(sessionKey: string): string {
   return path.join(pendingResetDir(), `${encodeURIComponent(sessionKey)}.json`);

@@ -4,6 +4,7 @@
  */
 
 import type { Embedder } from "./embedder.js";
+import { DEFAULT_LOCAL_ONNX_RERANK_MODEL, scoreQueryPassagePairs } from "./local-onnx-rerank.js";
 import { filterNoise } from "./noise-filter.js";
 import type { MemoryStore, MemorySearchResult } from "./store.js";
 
@@ -16,7 +17,7 @@ export interface RetrievalConfig {
   vectorWeight: number;
   bm25Weight: number;
   minScore: number;
-  rerank: "cross-encoder" | "lightweight" | "none";
+  rerank: "cross-encoder" | "local-onnx" | "lightweight" | "none";
   candidatePoolSize: number;
   recencyHalfLifeDays: number;
   recencyWeight: number;
@@ -28,6 +29,8 @@ export interface RetrievalConfig {
   lengthNormAnchor: number;
   hardMinScore: number;
   timeDecayHalfLifeDays: number;
+  /** Optional logger for rerank subsystem (used e.g. by local-onnx loader). */
+  rerankLogger?: (level: "info" | "error", message: string) => void;
 }
 
 export interface RetrievalContext {
@@ -52,7 +55,11 @@ export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
   bm25Weight: 0.3,
   minScore: 0.3,
   rerank: "cross-encoder",
-  candidatePoolSize: 20,
+  // Tuned for prompt-time latency: rerank cost is linear in pool size
+  // (~28ms/doc for local-onnx bge-reranker-v2-m3 q8 on Apple Silicon
+  // CPU). A pool of 10 keeps p95 under ~300ms while still giving the
+  // reranker enough candidates to meaningfully reorder.
+  candidatePoolSize: 10,
   recencyHalfLifeDays: 14,
   recencyWeight: 0.1,
   filterNoise: true,
@@ -332,6 +339,27 @@ function parseRerankResponse(provider: RerankProvider, data: unknown): RerankIte
 // ============================================================================
 
 export class MemoryRetriever {
+  /**
+   * Timing of the most recent `retrieve()` call in milliseconds. Callers
+   * (e.g. the plugin's `before_prompt_build` hook) can read this to log
+   * per-stage costs. Reset on every `retrieve()` invocation.
+   */
+  lastTimings: {
+    embed: number;
+    vectorAndBm25: number;
+    rerank: number;
+    rerankMode: "cross-encoder" | "local-onnx" | "local-bm25" | "none";
+    rerankDocs: number;
+    total: number;
+  } = {
+    embed: 0,
+    vectorAndBm25: 0,
+    rerank: 0,
+    rerankMode: "none",
+    rerankDocs: 0,
+    total: 0,
+  };
+
   constructor(
     private store: MemoryStore,
     private embedder: Embedder,
@@ -341,6 +369,16 @@ export class MemoryRetriever {
   async retrieve(context: RetrievalContext): Promise<RetrievalResult[]> {
     const { query, limit, category, entityTags } = context;
     const safeLimit = Math.min(Math.max(limit, 1), 20);
+
+    const tStart = performance.now();
+    this.lastTimings = {
+      embed: 0,
+      vectorAndBm25: 0,
+      rerank: 0,
+      rerankMode: "none",
+      rerankDocs: 0,
+      total: 0,
+    };
 
     let results: RetrievalResult[];
 
@@ -354,6 +392,7 @@ export class MemoryRetriever {
       results = this.applyEntityTagBoost(results, entityTags);
     }
 
+    this.lastTimings.total = Math.round(performance.now() - tStart);
     return results;
   }
 
@@ -403,12 +442,17 @@ export class MemoryRetriever {
     category?: string,
   ): Promise<RetrievalResult[]> {
     const candidatePoolSize = Math.max(this.config.candidatePoolSize, limit * 2);
-    const queryVector = await this.embedder.embedQuery(query);
 
+    const tEmbed = performance.now();
+    const queryVector = await this.embedder.embedQuery(query);
+    this.lastTimings.embed = Math.round(performance.now() - tEmbed);
+
+    const tSearch = performance.now();
     const [vectorResults, bm25Results] = await Promise.all([
       this.runVectorSearch(queryVector, candidatePoolSize, category),
       this.runBM25Search(query, candidatePoolSize, category),
     ]);
+    this.lastTimings.vectorAndBm25 = Math.round(performance.now() - tSearch);
 
     let fusedResults = await this.fuseResults(vectorResults, bm25Results);
     fusedResults = fusedResults.filter((r) => r.score >= this.config.minScore);
@@ -422,10 +466,29 @@ export class MemoryRetriever {
       return vs >= 0.45 || bs >= 0.5;
     });
 
+    const rerankInput = fusedResults.slice(0, limit * 2);
+    const tRerank = performance.now();
     let reranked =
       this.config.rerank !== "none"
-        ? await this.rerankResults(query, queryVector, fusedResults.slice(0, limit * 2))
+        ? await this.rerankResults(query, queryVector, rerankInput)
         : fusedResults;
+    if (this.config.rerank !== "none") {
+      this.lastTimings.rerank = Math.round(performance.now() - tRerank);
+      this.lastTimings.rerankDocs = rerankInput.length;
+      // rerankResults tags each hit's source with the method that produced
+      // the score; fall back to "cross-encoder" only if we explicitly asked
+      // for one (old behavior) so unknowns surface as "cross-encoder" not
+      // "local-onnx".
+      const firstMethod =
+        (reranked[0]?.sources as { reranked?: { method?: string } } | undefined)?.reranked
+          ?.method ?? "";
+      this.lastTimings.rerankMode =
+        firstMethod === "bm25-lite"
+          ? "local-bm25"
+          : firstMethod === "local-onnx"
+            ? "local-onnx"
+            : "cross-encoder";
+    }
 
     reranked = this.applyImportanceWeight(this.applyRecencyBoost(reranked));
     reranked = this.applyLengthNormalization(reranked);
@@ -566,7 +629,7 @@ export class MemoryRetriever {
                 return Object.assign({}, original, {
                   score: blendedScore,
                   sources: Object.assign({}, original.sources, {
-                    reranked: { score: item.score },
+                    reranked: { score: item.score, method: "cross-encoder" },
                   }),
                 });
               });
@@ -581,6 +644,50 @@ export class MemoryRetriever {
           }
         }
       } catch {}
+    }
+
+    // In-process ONNX cross-encoder path. No network, no API key; first
+    // call pays ~5–15s model load. On any failure (bad install, OOM,
+    // inference error) we fall through to BM25-lite below.
+    if (this.config.rerank === "local-onnx") {
+      try {
+        const documents = results.map((r) => r.entry.text);
+        const rawScores = await scoreQueryPassagePairs(query, documents, {
+          modelId: this.config.rerankModel || DEFAULT_LOCAL_ONNX_RERANK_MODEL,
+          logger: this.config.rerankLogger,
+        });
+
+        if (rawScores.length === results.length) {
+          // bge-reranker emits unbounded logits (~-10..+10). Map to 0–1
+          // via sigmoid so the blend math matches the cross-encoder path.
+          const normalized = rawScores.map((s) => 1 / (1 + Math.exp(-s)));
+          const reranked = results.map((original, idx) => {
+            const bm25Score = original.sources.bm25?.score ?? 0;
+            const floor =
+              bm25Score >= 0.75
+                ? original.score * 0.95
+                : bm25Score >= 0.6
+                  ? original.score * 0.9
+                  : original.score * 0.5;
+            const blendedScore = clamp01WithFloor(
+              normalized[idx] * 0.6 + original.score * 0.4,
+              floor,
+            );
+            return Object.assign({}, original, {
+              score: blendedScore,
+              sources: Object.assign({}, original.sources, {
+                reranked: { score: normalized[idx], method: "local-onnx" },
+              }),
+            });
+          });
+          return reranked.toSorted((a, b) => b.score - a.score);
+        }
+      } catch (err) {
+        this.config.rerankLogger?.(
+          "error",
+          `local-onnx rerank failed, falling back to BM25-lite: ${String(err)}`,
+        );
+      }
     }
 
     // Fallback: BM25-lite local rerank (keyword relevance blended with original score)

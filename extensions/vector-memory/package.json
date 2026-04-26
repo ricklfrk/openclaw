@@ -5,6 +5,7 @@
   "type": "module",
   "main": "index.ts",
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@lancedb/lancedb": "^0.26.0",
     "@sinclair/typebox": "0.34.49",
     "openai": "^4.80.0",

@@ -90,18 +90,29 @@
           "minScore": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.3 },
           "rerank": {
             "type": "string",
-            "enum": ["cross-encoder", "lightweight", "none"],
-            "default": "cross-encoder"
+            "enum": ["cross-encoder", "local-onnx", "lightweight", "none"],
+            "default": "cross-encoder",
+            "description": "Reranker mode. 'cross-encoder' calls a remote rerank API (requires rerankApiKey+rerankProvider). 'local-onnx' runs BAAI/bge-reranker-v2-m3 (or another ONNX cross-encoder) in-process via @huggingface/transformers — no API key, ~580MB first-run download, ~500–800MB RSS, ~80–250ms per 10–20 docs on CPU. 'lightweight' is the zero-dep BM25-lite fallback. 'none' disables reranking."
           },
           "rerankApiKey": { "type": "string" },
-          "rerankModel": { "type": "string", "default": "jina-reranker-v3" },
+          "rerankModel": {
+            "type": "string",
+            "default": "jina-reranker-v3",
+            "description": "Model identifier. For rerank='cross-encoder' use the provider's model slug (e.g. 'jina-reranker-v3'). For rerank='local-onnx' use a HuggingFace repo id exposing ONNX weights (default: 'onnx-community/bge-reranker-v2-m3-ONNX')."
+          },
           "rerankEndpoint": { "type": "string", "default": "https://api.jina.ai/v1/rerank" },
           "rerankProvider": {
             "type": "string",
             "enum": ["jina", "siliconflow", "voyage", "pinecone", "dashscope", "tei"],
             "default": "jina"
           },
-          "candidatePoolSize": { "type": "integer", "minimum": 10, "maximum": 100, "default": 20 },
+          "candidatePoolSize": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 100,
+            "default": 10,
+            "description": "Candidates pulled from vector+BM25 fusion before rerank. Linear in rerank cost (e.g. local-onnx ~28ms/doc). Default 10 keeps p95 rerank latency under ~300ms; raise to 20 only if you can afford the extra ~300ms per recall."
+          },
           "recencyHalfLifeDays": { "type": "number", "minimum": 0, "maximum": 365, "default": 14 },
           "recencyWeight": { "type": "number", "minimum": 0, "maximum": 0.5, "default": 0.1 },
           "filterNoise": { "type": "boolean", "default": true },
@@ -257,7 +268,7 @@
           "excludeGlobs": {
             "type": "array",
             "items": { "type": "string" },
-            "default": ["memory/.archived/**", "memory/.dreams/**"],
+            "default": ["memory/.archived/**", "memory/.dreams/**", "memory/dreaming/**"],
             "description": "Relative glob patterns (from workspace root) to skip while indexing."
           }
         }

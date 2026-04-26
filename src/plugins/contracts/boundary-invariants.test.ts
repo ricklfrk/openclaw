@@ -56,7 +56,11 @@ const BUNDLED_TYPED_HOOK_REGISTRATION_GUARDS = {
   "extensions/skill-workshop/index.ts": ["agent_end", "before_prompt_build"],
   "extensions/sleep-reset/index.ts": ["gateway_start", "gateway_stop"],
   "extensions/thread-ownership/index.ts": ["message_received", "message_sending"],
-  "extensions/vector-memory/index.ts": ["agent_end", "before_prompt_build"],
+  // Two agent_end registrations: one guarded by autoCapture (captures +
+  // extracts conversations into memory), one guarded by autoRecall (tracks
+  // last-LLM-call time for the idle-based relevant-memories stripper).
+  // Keeping them separate lets each half stay off when its feature is off.
+  "extensions/vector-memory/index.ts": ["agent_end", "agent_end", "before_prompt_build"],
 } as const satisfies Record<
   (typeof BUNDLED_TYPED_HOOK_REGISTRATION_FILES)[number],
   readonly string[]
