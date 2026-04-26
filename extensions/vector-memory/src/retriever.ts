@@ -55,19 +55,21 @@ export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
   bm25Weight: 0.3,
   minScore: 0.3,
   rerank: "cross-encoder",
-  // Rerank cost is linear in pool size. For real Chinese memories on
-  // local-onnx bge-reranker-v2-m3 q8 (Apple Silicon CPU), each doc is
-  // ~80ms, so pool=8 lands rerank at ~640ms wall time — the sweet spot
-  // between "reranker has enough candidates to actually reorder" and
-  // "prompt build stays under ~1s total end-to-end".
-  candidatePoolSize: 8,
+  // Rerank cost is linear in pool size, and all three scopes share the
+  // same local-onnx singleton — so 3 parallel scopes × pool=20 means 60
+  // (query,passage) pairs racing on one CPU-bound ONNX session, which
+  // measured at ~7s steady-state. Reduced to pool=10 (3×10=30 pairs)
+  // brings steady-state down to ~3–4s while keeping rerank-top-3 quality
+  // essentially unchanged (bge-reranker-v2-m3 is very accurate within the
+  // top-K window of a semantic + BM25 fused pool).
+  candidatePoolSize: 10,
   recencyHalfLifeDays: 14,
   recencyWeight: 0.1,
   filterNoise: true,
   rerankModel: "jina-reranker-v3",
   rerankEndpoint: "https://api.jina.ai/v1/rerank",
   lengthNormAnchor: 500,
-  hardMinScore: 0.35,
+  hardMinScore: 0.4,
   timeDecayHalfLifeDays: 60,
 };
 
@@ -424,8 +426,14 @@ export class MemoryRetriever {
 
     mapped = this.applyImportanceWeight(this.applyRecencyBoost(mapped));
     mapped = this.applyLengthNormalization(mapped);
-    mapped = mapped.filter((r) => r.score >= this.config.hardMinScore);
+    // Time-decay MUST be applied before the hardMinScore filter so old memories
+    // need correspondingly higher rerank/fusion scores to pass admission. If we
+    // filtered first and decayed second, decay would only affect final ordering
+    // while stale memories with borderline-relevant scores would still slip in
+    // (this is how a 2-month-old [media attached: …] breadcrumb was recalled
+    // into a live prompt on 2026-04-26 despite the 60-day half-life setting).
     mapped = this.applyTimeDecay(mapped);
+    mapped = mapped.filter((r) => r.score >= this.config.hardMinScore);
     if (this.config.filterNoise) {
       mapped = filterNoise(mapped, (r) => r.entry.text);
     }
@@ -500,8 +508,12 @@ export class MemoryRetriever {
 
     reranked = this.applyImportanceWeight(this.applyRecencyBoost(reranked));
     reranked = this.applyLengthNormalization(reranked);
-    reranked = reranked.filter((r) => r.score >= this.config.hardMinScore);
+    // See vectorOnlyRetrieval for the rationale: time-decay must gate admission,
+    // not only re-order the final list. Without this, a stale memory with a
+    // strong topical match can still slip past hardMinScore even though its
+    // half-life-adjusted relevance would be well below the floor.
     reranked = this.applyTimeDecay(reranked);
+    reranked = reranked.filter((r) => r.score >= this.config.hardMinScore);
     if (this.config.filterNoise) {
       reranked = filterNoise(reranked, (r) => r.entry.text);
     }

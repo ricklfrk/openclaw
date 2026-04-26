@@ -25,6 +25,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import { chunkDocument, type ChunkerConfig } from "./chunker.js";
 import type { Embedder } from "./embedder.js";
+import { rerankPassages, type RerankPassagesConfig } from "./rerank-shared.js";
 import type { MemoryEntry, MemorySearchResult, MemoryStore } from "./store.js";
 
 // ============================================================================
@@ -46,12 +47,32 @@ export interface ScopeRecallConfig {
   maxItems: number;
   maxChars: number;
   contextWindowChunks: number;
+  /**
+   * Entry gate. Applied twice to mirror the conversations retriever:
+   *   (a) vector search cutoff (drop items with cosine < minScore);
+   *   (b) post-fusion floor (drop items whose fused vec+BM25 score < minScore).
+   * Default 0.3.
+   */
   minScore: number;
+  /**
+   * Post-rerank exit gate. After the cross-encoder rerank score is blended
+   * with the fused baseline, items with the final blended score below this
+   * threshold are dropped (conversations retriever uses the same default
+   * 0.40). Set to 0 to disable.
+   */
+  hardMinScore?: number;
   timeDecay: {
     enabled: boolean;
     halfLifeDays: number;
     source?: "filename" | "mtime";
   };
+  /**
+   * Rerank blend weight for the cross-encoder score vs the fused vector+BM25
+   * (time-decay-adjusted) score. `rerankWeight` in [0, 1]; the baseline
+   * fusion score gets `1 - rerankWeight`. Default 0.6 (matches the
+   * conversations retriever). Set to 0 to bypass rerank even when configured.
+   */
+  rerankWeight?: number;
 }
 
 export interface ScopeSyncConfig {
@@ -75,11 +96,19 @@ export interface DailyScopeConfig {
   sync: ScopeSyncConfig;
 }
 
+/**
+ * Chunking defaults tuned for small, rerank-friendly passages:
+ *   - maxChunkSize 500: a single chunk ≈ one meaningful paragraph / bullet.
+ *   - overlapSize 100:  keeps semantic boundaries fluid across chunks.
+ * With `contextWindowChunks = 1` the recall item displayText becomes
+ * roughly 3 × 500 = ~1500 chars — the size the cross-encoder reranker
+ * sees and the size the caller injects into the prompt.
+ */
 export const DEFAULT_SCOPE_CHUNKING: ScopeChunkingConfig = {
-  maxChunkSize: 2000,
-  minChunkSize: 200,
-  overlapSize: 200,
-  maxLinesPerChunk: 40,
+  maxChunkSize: 500,
+  minChunkSize: 100,
+  overlapSize: 100,
+  maxLinesPerChunk: 20,
   semanticSplit: true,
 };
 
@@ -88,12 +117,15 @@ export const DEFAULT_WORKSPACE_SCOPE: WorkspaceScopeConfig = {
   memoryDir: "memory",
   chunking: DEFAULT_SCOPE_CHUNKING,
   recall: {
-    candidatePool: 20,
+    candidatePool: 10,
     maxItems: 3,
-    maxChars: 6000,
+    // 3 items × ~1500 chars each (chunk + prev + next) = ~4500 char block.
+    maxChars: 4500,
     contextWindowChunks: 1,
     minScore: 0.3,
+    hardMinScore: 0.4,
     timeDecay: { enabled: false, halfLifeDays: 365 },
+    rerankWeight: 0.6,
   },
   sync: { intervalMinutes: 10, onStartup: true },
   excludeGlobs: ["memory/.archived/**", "memory/.dreams/**", "memory/dreaming/**"],
@@ -103,15 +135,81 @@ export const DEFAULT_DAILY_SCOPE: DailyScopeConfig = {
   enabled: false,
   chunking: DEFAULT_SCOPE_CHUNKING,
   recall: {
-    candidatePool: 20,
+    candidatePool: 10,
     maxItems: 3,
-    maxChars: 6000,
+    maxChars: 4500,
     contextWindowChunks: 1,
     minScore: 0.3,
+    hardMinScore: 0.4,
     timeDecay: { enabled: true, halfLifeDays: 30, source: "filename" },
+    rerankWeight: 0.6,
   },
   sync: { intervalMinutes: 5, onStartup: true },
 };
+
+// ============================================================================
+// Index-time Noise Stripping
+// ============================================================================
+
+/**
+ * Remove machine-generated metadata that would pollute embeddings and BM25.
+ *
+ * Targets, in order:
+ *   1. Dreaming stage blocks — `<!-- openclaw:dreaming:<kind>:start -->` …
+ *      `<!-- openclaw:dreaming:<kind>:end -->` (light / rem / future kinds).
+ *      These contain candidate lists with `confidence: 0.00` and
+ *      `evidence: memory/...md:4-5` lines that match almost every query
+ *      via BM25 (keywords like "Candidate", "confidence", "evidence")
+ *      without carrying real memory content.
+ *   2. Labelled untrusted-metadata JSON blocks emitted by channels
+ *      (Signal / Discord / etc) when a message is quoted into daily
+ *      notes — e.g. `Conversation info (untrusted …): ```json {…} ```.`
+ *      These carry `message_id` / `sender_id` / `e164` etc, which are
+ *      useless for recall and skew BM25 toward channel ID noise.
+ *   3. Bare `{ "message_id": …, "sender_id": … }` JSON fences that some
+ *      raw session dumps include without the preceding label.
+ *
+ * We preserve the **original line count** by replacing each matched
+ * region with as many `\n` as it contained. This keeps `line_start` /
+ * `line_end` metadata accurate relative to the real file, so when the
+ * recall UI shows `memory/xxx.md#L123-145` the line numbers still
+ * match what the user sees in their editor.
+ */
+export function stripIndexNoise(text: string): string {
+  const preserveLines = (match: string): string => {
+    let n = 0;
+    for (let i = 0; i < match.length; i++) {
+      if (match.charCodeAt(i) === 10) {
+        n++;
+      }
+    }
+    return n > 0 ? "\n".repeat(n) : "";
+  };
+  let out = text.replace(
+    /<!-- openclaw:dreaming:[a-z]+:start -->[\s\S]*?<!-- openclaw:dreaming:[a-z]+:end -->/g,
+    preserveLines,
+  );
+  // Orphan-opener: dreamer crashed / was interrupted mid-write, leaving a
+  // `:start -->` with no matching `:end -->`. Strip from the orphan tag up
+  // to the next top-level heading (`\n# `) or end-of-text, so the dangling
+  // `confidence:` / `evidence:` candidate lines don't bleed into real
+  // memory content.
+  out = out.replace(
+    /<!-- openclaw:dreaming:[a-z]+:start -->[\s\S]*?(?=\n#{1,6}\s|$)/g,
+    preserveLines,
+  );
+  // Orphan closer left behind when the matching start was trimmed earlier.
+  out = out.replace(/<!-- openclaw:dreaming:[a-z]+:end -->\n?/g, preserveLines);
+  out = out.replace(
+    /(?:Conversation info|Sender|Replied message)\s*\(untrusted[^)]*\):\s*```json\s*\{[\s\S]*?\}\s*```/g,
+    preserveLines,
+  );
+  out = out.replace(
+    /```json\s*\{[^}]*"message_id"\s*:[^}]*"sender_id"\s*:[^}]*\}\s*```/g,
+    preserveLines,
+  );
+  return out;
+}
 
 // ============================================================================
 // File Discovery
@@ -305,24 +403,28 @@ export async function indexFile(
     await store.deleteByMetadataKV("source_file", file.relPath);
   }
 
-  const chunked = chunkDocument(text, chunkingConfig);
+  // Strip machine-generated noise (dream candidate blocks, untrusted-metadata
+  // JSON envelopes) before chunking so embeddings and BM25 index only real
+  // memory content. `stripIndexNoise` preserves newline count, so the
+  // `line_start` / `line_end` metadata still maps to the same lines in the
+  // on-disk file — users clicking `memory/xxx.md#L123` still land correctly.
+  const indexText = stripIndexNoise(text);
+  const chunked = chunkDocument(indexText, chunkingConfig);
   if (chunked.chunks.length === 0) {
     return { indexed: false, chunks: 0 };
   }
 
-  // Track approximate line ranges by searching for chunk start positions.
-  // We walk the original text forward so each chunk gets a monotonic cursor.
   const lineRanges: Array<{ start: number; end: number }> = [];
   {
     let cursor = 0;
     for (const chunk of chunked.chunks) {
       const head = chunk.slice(0, Math.min(chunk.length, 60)).trimStart();
-      const found = head.length > 0 ? text.indexOf(head, cursor) : cursor;
+      const found = head.length > 0 ? indexText.indexOf(head, cursor) : cursor;
       const startOffset = found >= 0 ? found : cursor;
-      const endOffset = Math.min(text.length, startOffset + chunk.length);
+      const endOffset = Math.min(indexText.length, startOffset + chunk.length);
       lineRanges.push({
-        start: countLinesUpTo(text, startOffset),
-        end: countLinesUpTo(text, endOffset),
+        start: countLinesUpTo(indexText, startOffset),
+        end: countLinesUpTo(indexText, endOffset),
       });
       cursor = Math.max(
         cursor,
@@ -471,6 +573,10 @@ export interface ScopedRetrievalResult {
   lineStart: number;
   lineEnd: number;
   fileDate?: string;
+  /** Normalized rerank score in [0, 1], if reranker ran. */
+  rerankScore?: number;
+  /** Which backend produced `rerankScore`. */
+  rerankMethod?: string;
 }
 
 function parseMetadata(entry: MemoryEntry): Record<string, unknown> {
@@ -513,6 +619,24 @@ function mergeRankings(
   return merged;
 }
 
+/**
+ * Soft time-decay with a 50% floor — matches `retriever.ts` `applyTimeDecay`
+ * used by the conversations scope so all three memory scopes share the same
+ * decay shape:
+ *
+ *   factor = 0.5 + 0.5 * exp(-ageDays / halfLife)
+ *   score  = fused * factor        (factor ∈ [0.5, 1.0])
+ *
+ * Because `factor` is bounded below by 0.5, even very old items keep at
+ * least half their fused score — so they can still be recalled when the
+ * candidate pool is otherwise empty. This is intentional: purely
+ * exponential half-life (0.5^n) was erasing 3-month-old daily entries
+ * entirely (age=90d, halfLife=30d → ×0.125), which hid usable memory.
+ *
+ * At age = halfLife:   factor ≈ 0.684
+ * At age = 2*halfLife: factor ≈ 0.568
+ * At age → ∞:          factor = 0.50
+ */
 function applyTimeDecay(
   fused: number,
   timestampMs: number,
@@ -523,8 +647,8 @@ function applyTimeDecay(
     return fused;
   }
   const ageDays = Math.max(0, (nowMs - timestampMs) / (24 * 3600_000));
-  const multiplier = 0.5 ** (ageDays / halfLifeDays);
-  return fused * multiplier;
+  const factor = 0.5 + 0.5 * Math.exp(-ageDays / halfLifeDays);
+  return fused * factor;
 }
 
 export interface ScopedRetrieveOptions {
@@ -534,11 +658,27 @@ export interface ScopedRetrieveOptions {
   embedder: Embedder;
   nowMs?: number;
   log?: (msg: string) => void;
+  /**
+   * Optional rerank backend. When provided, the full candidate pool
+   * (context-window-expanded into displayText) is sent to the reranker
+   * before overlap dedup + top-K selection.
+   */
+  rerank?: RerankPassagesConfig;
 }
 
 /**
- * Hybrid (vector + BM25) retrieval against a single scope store, with
- * optional time decay and context-window expansion.
+ * Hybrid (vector + BM25) retrieval against a single scope store, then:
+ *   1. Fuse + time-decay the candidate pool (default 20 items).
+ *   2. Expand every candidate into its full displayText (chunk + N chunks
+ *      before/after, controlled by `contextWindowChunks`). This is the
+ *      passage the reranker scores AND the passage the caller injects.
+ *   3. (Optional) Rerank the expanded passages with a cross-encoder and
+ *      blend the rerank score with the fused+decayed score.
+ *   4. Overlap dedup — if two top items' chunk-index ranges intersect
+ *      (same source_file, |Δindex| ≤ 2·contextWindowChunks), keep the
+ *      higher-ranked one and backfill with the next non-overlapping
+ *      candidate (so content isn't repeated in the injected block).
+ *   5. Return top `maxItems`.
  */
 export async function retrieveScope(opts: ScopedRetrieveOptions): Promise<ScopedRetrievalResult[]> {
   const { query, recall, store, embedder } = opts;
@@ -570,10 +710,29 @@ export async function retrieveScope(opts: ScopedRetrieveOptions): Promise<Scoped
     return [];
   }
 
-  // Fuse rankings (70/30 vector/BM25 — matches main retriever default).
+  // 1) Fuse rankings (70/30 vector/BM25 — matches main retriever default).
   const merged = mergeRankings(vectorHits, bm25Hits, 0.7, 0.3);
 
-  // Apply time decay if configured.
+  // 1a) Post-fusion entry gate (mirrors conversations retriever):
+  //     - fused score >= minScore: drop items whose combined signal is weak.
+  //     - raw-signal floor: require vec >= 0.45 OR bm25 >= 0.5 so we don't
+  //       admit BM25-only noise that recency/rerank boosts would inflate.
+  //     Items failing the floor are dropped BEFORE we spend rerank compute.
+  let fusedEntries = [...merged.values()].filter((m) => m.fused >= recall.minScore);
+  const droppedByMinScore = merged.size - fusedEntries.length;
+  const beforeFloor = fusedEntries.length;
+  fusedEntries = fusedEntries.filter((m) => m.vec >= 0.45 || m.bm >= 0.5);
+  const droppedByFloor = beforeFloor - fusedEntries.length;
+  if (droppedByMinScore > 0 || droppedByFloor > 0) {
+    log(
+      `vector-memory/workspace: gate filtered minScore=-${droppedByMinScore} rawFloor=-${droppedByFloor} (kept ${fusedEntries.length}/${merged.size})`,
+    );
+  }
+  if (fusedEntries.length === 0) {
+    return [];
+  }
+
+  // 2) Time decay.
   const halfLife = recall.timeDecay.enabled ? recall.timeDecay.halfLifeDays : 0;
   const withDecay: Array<{
     entry: MemoryEntry;
@@ -583,47 +742,96 @@ export async function retrieveScope(opts: ScopedRetrieveOptions): Promise<Scoped
     decayed: number;
     multiplier: number;
   }> = [];
-  for (const m of merged.values()) {
+  for (const m of fusedEntries) {
     const decayed =
       halfLife > 0 ? applyTimeDecay(m.fused, m.entry.timestamp, halfLife, nowMs) : m.fused;
     const multiplier = m.fused > 0 ? decayed / m.fused : 1;
     withDecay.push({ ...m, decayed, multiplier });
   }
 
-  // Sort by decayed score, pick top candidatePool.
-  const diversified = withDecay.toSorted((a, b) => b.decayed - a.decayed).slice(0, candidatePool);
+  // 3) Top candidatePool by decayed score.
+  const pool = withDecay.toSorted((a, b) => b.decayed - a.decayed).slice(0, candidatePool);
 
-  // Dedup & keep unique source_file diversity (prefer different files first).
-  const seenFiles = new Map<string, number>();
+  // 4) Expand each candidate into its full displayText (chunk + context).
+  //    We do this BEFORE rerank so the reranker sees the same passage the
+  //    caller will inject — cross-encoders care about full context.
+  const expanded: ScopedRetrievalResult[] = await Promise.all(
+    pool.map((row) => expandContext(row, parseMetadata(row.entry), store, recall, nowMs)),
+  );
 
-  const results: ScopedRetrievalResult[] = [];
-  // First pass: pick best-per-file for up to maxItems.
-  for (const row of diversified) {
-    if (results.length >= recall.maxItems) {
+  // 5) Optional rerank over the full candidatePool (not just limit*N).
+  const rerankWeight = Math.max(0, Math.min(1, recall.rerankWeight ?? 0.6));
+  let reranked: ScopedRetrievalResult[] = expanded;
+  if (opts.rerank && opts.rerank.method !== "none" && rerankWeight > 0 && expanded.length > 0) {
+    const tRerank = performance.now();
+    const rr = await rerankPassages(
+      query,
+      expanded.map((r) => r.displayText),
+      opts.rerank,
+    );
+    const rerankMs = Math.round(performance.now() - tRerank);
+    if (rr) {
+      reranked = expanded
+        .map((item, idx) => {
+          const rrScore = rr.scores[idx] ?? 0;
+          const blended = rrScore * rerankWeight + item.score * (1 - rerankWeight);
+          return {
+            ...item,
+            score: blended,
+            rerankScore: rrScore,
+            rerankMethod: rr.method,
+          };
+        })
+        .toSorted((a, b) => b.score - a.score);
+      log(
+        `vector-memory/workspace: rerank ${rr.method} over ${expanded.length} docs in ${rerankMs}ms`,
+      );
+    } else {
+      log(`vector-memory/workspace: rerank returned null for ${expanded.length} docs`);
+    }
+  }
+
+  // 5a) Post-rerank exit gate (mirrors conversations retriever's hardMinScore).
+  //     Drops items whose blended rerank+fusion score is below threshold —
+  //     prevents low-quality reranker tails from sneaking into top-K just
+  //     because the pool ran out of strong candidates.
+  const hardMin = recall.hardMinScore ?? 0;
+  if (hardMin > 0 && reranked.length > 0) {
+    const before = reranked.length;
+    reranked = reranked.filter((r) => r.score >= hardMin);
+    if (reranked.length < before) {
+      log(
+        `vector-memory/workspace: hardMinScore=${hardMin.toFixed(2)} dropped ${before - reranked.length}/${before}`,
+      );
+    }
+  }
+
+  // 6) Overlap dedup — remove any item whose chunk-window intersects a
+  //    higher-ranked item's window (same file, |Δindex| ≤ 2·ctxWin). Then
+  //    backfill with the next non-overlapping candidate. This avoids
+  //    repeating the same text across top-K when a file has consecutive
+  //    high-scoring chunks.
+  const ctxWin = Math.max(0, recall.contextWindowChunks);
+  const selected: ScopedRetrievalResult[] = [];
+  const rejectedForOverlap = new Set<string>();
+  for (const cand of reranked) {
+    if (selected.length >= recall.maxItems) {
       break;
     }
-    const meta = parseMetadata(row.entry);
-    const src = (meta.source_file as string) || "unknown";
-    if (seenFiles.has(src)) {
+    const overlaps = selected.some(
+      (s) =>
+        s.sourceFile === cand.sourceFile && Math.abs(s.chunkIndex - cand.chunkIndex) <= 2 * ctxWin,
+    );
+    if (overlaps) {
+      rejectedForOverlap.add(cand.entry.id);
       continue;
     }
-    seenFiles.set(src, 1);
-    results.push(await expandContext(row, meta, store, recall, nowMs));
+    selected.push(cand);
   }
-  // Second pass: fill remaining slots with runners-up (may be same file).
-  if (results.length < recall.maxItems) {
-    for (const row of diversified) {
-      if (results.length >= recall.maxItems) {
-        break;
-      }
-      if (results.some((r) => r.entry.id === row.entry.id)) {
-        continue;
-      }
-      const meta = parseMetadata(row.entry);
-      results.push(await expandContext(row, meta, store, recall, nowMs));
-    }
+  if (rejectedForOverlap.size > 0) {
+    log(`vector-memory/workspace: overlap dedup skipped ${rejectedForOverlap.size} candidate(s)`);
   }
-  return results;
+  return selected;
 }
 
 async function expandContext(

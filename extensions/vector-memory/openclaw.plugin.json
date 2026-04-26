@@ -64,6 +64,11 @@
         "default": [],
         "description": "Agent IDs to exclude from auto-recall (e.g. cron, background agents)"
       },
+      "autoRecallSkipHeartbeat": {
+        "type": "boolean",
+        "default": true,
+        "description": "Skip auto-recall injection on heartbeat turns (ctx.trigger === 'heartbeat'). Heartbeats have no fresh user query, so retrieval is pure waste and any injection would be stripped on the next real turn anyway. Default: true."
+      },
       "autoRecallStripOldAfterIdleMs": {
         "type": "integer",
         "minimum": 0,
@@ -110,14 +115,14 @@
             "type": "integer",
             "minimum": 5,
             "maximum": 100,
-            "default": 8,
-            "description": "Candidates pulled from vector+BM25 fusion and fed into rerank. Rerank sees the whole pool, so latency is linear in this number (~80ms/doc on local-onnx bge-reranker-v2-m3 q8, Apple Silicon CPU). Default 8 keeps rerank wall time around 600ms; raise for better ranking quality at higher prompt-build cost."
+            "default": 10,
+            "description": "Candidates pulled from vector+BM25 fusion and fed into rerank. Rerank sees the whole pool, so latency is linear in this number (~80-150ms/doc on local-onnx bge-reranker-v2-m3 q8, Apple Silicon CPU). Default 10 (× 3 parallel scopes = 30 pair inferences ≈ 3-4s steady-state); raise for better ranking quality at higher prompt-build cost."
           },
           "recencyHalfLifeDays": { "type": "number", "minimum": 0, "maximum": 365, "default": 14 },
           "recencyWeight": { "type": "number", "minimum": 0, "maximum": 0.5, "default": 0.1 },
           "filterNoise": { "type": "boolean", "default": true },
           "lengthNormAnchor": { "type": "integer", "minimum": 0, "maximum": 5000, "default": 500 },
-          "hardMinScore": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.35 },
+          "hardMinScore": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.4 },
           "timeDecayHalfLifeDays": { "type": "number", "minimum": 0, "maximum": 365, "default": 60 }
         }
       },
@@ -208,17 +213,17 @@
             "properties": {
               "maxChunkSize": {
                 "type": "integer",
-                "minimum": 200,
+                "minimum": 100,
                 "maximum": 16000,
-                "default": 2000
+                "default": 500
               },
-              "minChunkSize": { "type": "integer", "minimum": 50, "maximum": 4000, "default": 200 },
-              "overlapSize": { "type": "integer", "minimum": 0, "maximum": 2000, "default": 200 },
+              "minChunkSize": { "type": "integer", "minimum": 50, "maximum": 4000, "default": 100 },
+              "overlapSize": { "type": "integer", "minimum": 0, "maximum": 2000, "default": 100 },
               "maxLinesPerChunk": {
                 "type": "integer",
                 "minimum": 5,
                 "maximum": 500,
-                "default": 40
+                "default": 20
               },
               "semanticSplit": { "type": "boolean", "default": true }
             }
@@ -227,16 +232,36 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "candidatePool": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 },
+              "candidatePool": { "type": "integer", "minimum": 1, "maximum": 100, "default": 10 },
               "maxItems": { "type": "integer", "minimum": 1, "maximum": 20, "default": 3 },
-              "maxChars": { "type": "integer", "minimum": 64, "maximum": 32000, "default": 6000 },
+              "maxChars": { "type": "integer", "minimum": 64, "maximum": 32000, "default": 4500 },
               "contextWindowChunks": {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 10,
                 "default": 1
               },
-              "minScore": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.3 },
+              "minScore": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.3,
+                "description": "Entry gate applied at vector search AND after vec+BM25 fusion. Also enforces a raw-signal floor (vec >= 0.45 OR bm25 >= 0.5) to drop BM25-only noise — matches the conversations retriever."
+              },
+              "hardMinScore": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.4,
+                "description": "Post-rerank exit gate. Items whose blended rerank+fusion score is below this are dropped. 0 disables the gate. Matches the conversations retriever's hardMinScore."
+              },
+              "rerankWeight": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.6,
+                "description": "Blend weight for the cross-encoder rerank score vs the fused vector+BM25 (time-decay-adjusted) score. 0 disables rerank for this scope; 1 uses rerank score only. Default 0.6 matches the conversations retriever."
+              },
               "timeDecay": {
                 "type": "object",
                 "additionalProperties": false,
@@ -285,17 +310,17 @@
             "properties": {
               "maxChunkSize": {
                 "type": "integer",
-                "minimum": 200,
+                "minimum": 100,
                 "maximum": 16000,
-                "default": 2000
+                "default": 500
               },
-              "minChunkSize": { "type": "integer", "minimum": 50, "maximum": 4000, "default": 200 },
-              "overlapSize": { "type": "integer", "minimum": 0, "maximum": 2000, "default": 200 },
+              "minChunkSize": { "type": "integer", "minimum": 50, "maximum": 4000, "default": 100 },
+              "overlapSize": { "type": "integer", "minimum": 0, "maximum": 2000, "default": 100 },
               "maxLinesPerChunk": {
                 "type": "integer",
                 "minimum": 5,
                 "maximum": 500,
-                "default": 40
+                "default": 20
               },
               "semanticSplit": { "type": "boolean", "default": true }
             }
@@ -304,16 +329,36 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "candidatePool": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 },
+              "candidatePool": { "type": "integer", "minimum": 1, "maximum": 100, "default": 10 },
               "maxItems": { "type": "integer", "minimum": 1, "maximum": 20, "default": 3 },
-              "maxChars": { "type": "integer", "minimum": 64, "maximum": 32000, "default": 6000 },
+              "maxChars": { "type": "integer", "minimum": 64, "maximum": 32000, "default": 4500 },
               "contextWindowChunks": {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 10,
                 "default": 1
               },
-              "minScore": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.3 },
+              "minScore": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.3,
+                "description": "Entry gate applied at vector search AND after vec+BM25 fusion. Also enforces a raw-signal floor (vec >= 0.45 OR bm25 >= 0.5) to drop BM25-only noise — matches the conversations retriever."
+              },
+              "hardMinScore": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.4,
+                "description": "Post-rerank exit gate. Items whose blended rerank+fusion score is below this are dropped. 0 disables the gate. Matches the conversations retriever's hardMinScore."
+              },
+              "rerankWeight": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.6,
+                "description": "Blend weight for the cross-encoder rerank score vs the fused vector+BM25 (time-decay-adjusted) score. 0 disables rerank for this scope; 1 uses rerank score only. Default 0.6 matches the conversations retriever."
+              },
               "timeDecay": {
                 "type": "object",
                 "additionalProperties": false,

@@ -4,11 +4,11 @@ import { stripOldInjections, stripRelevantMemoriesFromText } from "./strip-old-i
 
 const INJECTION = [
   "<relevant-memories>",
-  "<from-conversations>",
+  "<from-vector-memory>",
   "[UNTRUSTED DATA — historical notes extracted from past conversations]",
   "- foo",
   "[END]",
-  "</from-conversations>",
+  "</from-vector-memory>",
   "</relevant-memories>",
   "",
   "",

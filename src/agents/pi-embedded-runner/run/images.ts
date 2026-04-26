@@ -213,6 +213,41 @@ async function sanitizeImagesWithLog(
 }
 
 /**
+ * XML-like wrapper tags that enclose untrusted historical data injected by
+ * plugins (vector-memory recall, workspace/daily journals, etc.). Any image
+ * references appearing inside these blocks must NOT trigger on-disk reads —
+ * they are recalled *descriptions* of past attachments, not live user input.
+ *
+ * Without this guard, a markdown chunk like
+ *   "[media attached: /media/inbound/abc.jpg (image/jpeg)]"
+ * surfaced by daily-memory recall would get re-attached as a live multimodal
+ * image, leaking old media back into the current turn and confusing the model
+ * about temporal context. See AGENTS.md / docs for the original bug report
+ * (2026-04-26 anime-girl leak).
+ */
+const UNTRUSTED_MEMORY_BLOCK_TAGS = [
+  "relevant-memories",
+  "from-workspace-memory",
+  "from-daily-memory",
+  "from-vector-memory",
+] as const;
+
+/**
+ * Removes the *contents* of untrusted memory XML blocks from the prompt so
+ * that downstream regex scanners do not treat recalled media references as
+ * live attachments. The tags themselves are replaced with a placeholder so
+ * offsets roughly survive for debugging but the payload is gone.
+ */
+export function stripUntrustedMemoryBlocks(prompt: string): string {
+  let result = prompt;
+  for (const tag of UNTRUSTED_MEMORY_BLOCK_TAGS) {
+    const pattern = new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}>`, "gi");
+    result = result.replace(pattern, `<${tag}-stripped/>`);
+  }
+  return result;
+}
+
+/**
  * Detects image references in a user prompt.
  *
  * Patterns detected:
@@ -223,10 +258,15 @@ async function sanitizeImagesWithLog(
  * - Message attachments: [Image: source: /path/to/image.jpg]
  * - Gateway claim-check URIs: [media attached: media://inbound/<id>]
  *
+ * Untrusted memory blocks (<relevant-memories>, <from-*-memory>) are stripped
+ * before scanning — references recalled from long-term memory MUST NOT trigger
+ * live filesystem reads. See {@link stripUntrustedMemoryBlocks}.
+ *
  * @param prompt The user prompt text to scan
  * @returns Array of detected image references
  */
 export function detectImageReferences(prompt: string): DetectedImageRef[] {
+  const sanitizedPrompt = stripUntrustedMemoryBlocks(prompt);
   const refs: DetectedImageRef[] = [];
   const seen = new Set<string>();
 
@@ -261,7 +301,7 @@ export function detectImageReferences(prompt: string): DetectedImageRef[] {
   FILE_URL_PATTERN.lastIndex = 0;
   PATH_PATTERN.lastIndex = 0;
   let match: RegExpExecArray | null;
-  while ((match = MEDIA_ATTACHED_PATTERN.exec(prompt)) !== null) {
+  while ((match = MEDIA_ATTACHED_PATTERN.exec(sanitizedPrompt)) !== null) {
     const content = match[1];
 
     // Skip "[media attached: N files]" header lines
@@ -294,7 +334,7 @@ export function detectImageReferences(prompt: string): DetectedImageRef[] {
   }
 
   // Pattern for [Image: source: /path/...] format from messaging systems
-  while ((match = MESSAGE_IMAGE_PATTERN.exec(prompt)) !== null) {
+  while ((match = MESSAGE_IMAGE_PATTERN.exec(sanitizedPrompt)) !== null) {
     const raw = match[1]?.trim();
     if (raw) {
       addPathRef(raw);
@@ -304,7 +344,7 @@ export function detectImageReferences(prompt: string): DetectedImageRef[] {
   // Remote HTTP(S) URLs are intentionally ignored. Native image injection is local-only.
 
   // Pattern for file:// URLs - treat as paths since loadWebMedia handles them
-  while ((match = FILE_URL_PATTERN.exec(prompt)) !== null) {
+  while ((match = FILE_URL_PATTERN.exec(sanitizedPrompt)) !== null) {
     const raw = match[0];
     const dedupeKey = normalizeRefForDedupe(raw);
     if (seen.has(dedupeKey)) {
@@ -326,7 +366,7 @@ export function detectImageReferences(prompt: string): DetectedImageRef[] {
   // - ./relative/path.ext
   // - ../parent/path.ext
   // - ~/home/path.ext
-  while ((match = PATH_PATTERN.exec(prompt)) !== null) {
+  while ((match = PATH_PATTERN.exec(sanitizedPrompt)) !== null) {
     // Use capture group 1 (the path without delimiter prefix); skip if undefined
     if (match[1]) {
       addPathRef(match[1]);

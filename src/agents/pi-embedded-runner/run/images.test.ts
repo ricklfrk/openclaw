@@ -11,6 +11,7 @@ import {
   mergePromptAttachmentImages,
   modelSupportsImages,
   splitPromptAndAttachmentRefs,
+  stripUntrustedMemoryBlocks,
 } from "./images.js";
 
 function expectNoPromptImages(result: { detectedRefs: unknown[]; images: unknown[] }) {
@@ -214,6 +215,102 @@ what is this?`);
     } finally {
       platformSpy.mockRestore();
     }
+  });
+});
+
+describe("stripUntrustedMemoryBlocks / untrusted memory leak protection", () => {
+  it("ignores [media attached: ...] inside <relevant-memories>", () => {
+    const prompt = `<relevant-memories>
+  <from-daily-memory>
+    [media attached: /Users/mea/.openclaw/media/inbound/old-secret.jpg (image/jpeg)]
+  </from-daily-memory>
+</relevant-memories>
+
+What does this image show?`;
+    expectNoImageReferences(prompt);
+  });
+
+  it("ignores [media attached: ...] inside <from-daily-memory>", () => {
+    const prompt =
+      "context before <from-daily-memory>[media attached: /tmp/past.png]</from-daily-memory> after";
+    expectNoImageReferences(prompt);
+  });
+
+  it("ignores [media attached: ...] inside <from-workspace-memory>", () => {
+    const prompt =
+      "context <from-workspace-memory>[media attached: /tmp/stale.jpg (image/jpeg)]</from-workspace-memory>";
+    expectNoImageReferences(prompt);
+  });
+
+  it("ignores [media attached: ...] inside <from-vector-memory>", () => {
+    const prompt = "<from-vector-memory>[media attached: /tmp/ghost.png]</from-vector-memory>";
+    expectNoImageReferences(prompt);
+  });
+
+  it("ignores inline file paths inside untrusted memory blocks", () => {
+    const prompt = `<from-daily-memory>
+  User quoted: /Users/mea/.openclaw/media/inbound/leak.png earlier.
+</from-daily-memory>
+
+What's up today?`;
+    expectNoImageReferences(prompt);
+  });
+
+  it("still detects current-turn attachments alongside untrusted memory blocks", () => {
+    const prompt = `<relevant-memories>
+  <from-daily-memory>
+    [media attached: /tmp/stale-history.jpg (image/jpeg)]
+  </from-daily-memory>
+</relevant-memories>
+
+Here is my current screenshot: [media attached: /tmp/live-now.png (image/png)]`;
+    const refs = expectImageReferenceCount(prompt, 1);
+    expect(refs[0]?.resolved).toBe("/tmp/live-now.png");
+  });
+
+  it("still detects media:// URIs in current turn, not in memory blocks", () => {
+    const prompt = `<from-daily-memory>
+  [media attached: media://inbound/stale-uuid.png]
+</from-daily-memory>
+
+[media attached: media://inbound/fresh-uuid.png]`;
+    const refs = expectImageReferenceCount(prompt, 1);
+    expect(refs[0]?.resolved).toBe("media://inbound/fresh-uuid.png");
+    expect(refs[0]?.type).toBe("media-uri");
+  });
+
+  it("handles nested blocks (relevant-memories wrapping from-daily-memory)", () => {
+    const prompt = `<relevant-memories>
+  <note>background only</note>
+  <from-workspace-memory>
+    [media attached: /tmp/a.jpg]
+  </from-workspace-memory>
+  <from-daily-memory>
+    [media attached: /tmp/b.jpg]
+  </from-daily-memory>
+</relevant-memories>
+
+Current turn has no image.`;
+    expectNoImageReferences(prompt);
+  });
+
+  it("strips block contents but leaves non-memory text intact", () => {
+    const prompt =
+      "before <from-daily-memory>SECRET /tmp/hidden.jpg</from-daily-memory> after /tmp/visible.jpg";
+    const stripped = stripUntrustedMemoryBlocks(prompt);
+    expect(stripped).not.toContain("SECRET");
+    expect(stripped).not.toContain("hidden.jpg");
+    expect(stripped).toContain("/tmp/visible.jpg");
+  });
+
+  it("is case-insensitive for wrapper tags", () => {
+    const prompt = "<FROM-DAILY-MEMORY>[media attached: /tmp/old.jpg]</FROM-DAILY-MEMORY>";
+    expectNoImageReferences(prompt);
+  });
+
+  it("leaves prompt unchanged when no memory blocks present", () => {
+    const prompt = "Just a plain user message with /tmp/photo.png";
+    expect(stripUntrustedMemoryBlocks(prompt)).toBe(prompt);
   });
 });
 
