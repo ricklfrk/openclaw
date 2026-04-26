@@ -90,13 +90,13 @@ export const DEFAULT_WORKSPACE_SCOPE: WorkspaceScopeConfig = {
   recall: {
     candidatePool: 20,
     maxItems: 3,
-    maxChars: 600,
+    maxChars: 6000,
     contextWindowChunks: 1,
     minScore: 0.3,
     timeDecay: { enabled: false, halfLifeDays: 365 },
   },
   sync: { intervalMinutes: 10, onStartup: true },
-  excludeGlobs: ["memory/.archived/**", "memory/.dreams/**"],
+  excludeGlobs: ["memory/.archived/**", "memory/.dreams/**", "memory/dreaming/**"],
 };
 
 export const DEFAULT_DAILY_SCOPE: DailyScopeConfig = {
@@ -105,7 +105,7 @@ export const DEFAULT_DAILY_SCOPE: DailyScopeConfig = {
   recall: {
     candidatePool: 20,
     maxItems: 3,
-    maxChars: 600,
+    maxChars: 6000,
     contextWindowChunks: 1,
     minScore: 0.3,
     timeDecay: { enabled: true, halfLifeDays: 30, source: "filename" },

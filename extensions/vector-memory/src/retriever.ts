@@ -650,8 +650,22 @@ export class MemoryRetriever {
               );
             return [...reranked, ...unreturned].toSorted((a, b) => b.score - a.score);
           }
+          this.config.rerankLogger?.(
+            "error",
+            `cross-encoder rerank response parse failed (${provider}/${model}); falling back to BM25-lite`,
+          );
+        } else {
+          this.config.rerankLogger?.(
+            "error",
+            `cross-encoder rerank HTTP ${response.status} (${provider}/${model}); falling back to BM25-lite`,
+          );
         }
-      } catch {}
+      } catch (err) {
+        this.config.rerankLogger?.(
+          "error",
+          `cross-encoder rerank failed, falling back to BM25-lite: ${String(err)}`,
+        );
+      }
     }
 
     // In-process ONNX cross-encoder path. No network, no API key; first

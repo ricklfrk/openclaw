@@ -226,10 +226,58 @@ class RecallDedup {
   private seen = new Map<string, Map<string, number>>();
   private turnCounters = new Map<string, number>();
   private static readonly MAX_ENTRIES_PER_AGENT = 500;
+  private readonly maxAgents: number;
+  private readonly onAgentEvicted?: (agentId: string) => void;
+
+  constructor(opts: { maxAgents?: number; onAgentEvicted?: (agentId: string) => void } = {}) {
+    this.maxAgents = opts.maxAgents ?? 200;
+    this.onAgentEvicted = opts.onAgentEvicted;
+  }
+
+  /**
+   * Refreshes an agent's position in the insertion-order LRU. Every method
+   * that reads or mutates per-agent state should call this so the oldest
+   * truly-idle agent is the one evicted when we hit the cap.
+   */
+  private touchAgent(agentId: string): void {
+    if (this.turnCounters.has(agentId)) {
+      const n = this.turnCounters.get(agentId)!;
+      this.turnCounters.delete(agentId);
+      this.turnCounters.set(agentId, n);
+    }
+    const seenMap = this.seen.get(agentId);
+    if (seenMap) {
+      this.seen.delete(agentId);
+      this.seen.set(agentId, seenMap);
+    }
+    this.enforceAgentCap();
+  }
+
+  private enforceAgentCap(): void {
+    // Use `turnCounters` as the canonical order-of-use index since it is
+    // touched by every turn. Evict in insertion order (oldest first).
+    while (this.turnCounters.size > this.maxAgents) {
+      const oldest = this.turnCounters.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      this.turnCounters.delete(oldest);
+      this.seen.delete(oldest);
+      if (this.onAgentEvicted) {
+        try {
+          this.onAgentEvicted(oldest);
+        } catch {
+          // Eviction is best-effort; callers must not throw here.
+        }
+      }
+    }
+  }
 
   nextTurn(agentId: string): number {
     const n = (this.turnCounters.get(agentId) ?? 0) + 1;
+    this.turnCounters.delete(agentId);
     this.turnCounters.set(agentId, n);
+    this.enforceAgentCap();
     return n;
   }
 
@@ -240,7 +288,8 @@ class RecallDedup {
     const agentMap = this.seen.get(agentId)!;
     agentMap.set(memoryId, turn);
 
-    // LRU eviction: drop oldest entries when over cap
+    // LRU eviction within the agent's own Map: drop oldest memory ids
+    // when over cap.
     if (agentMap.size > RecallDedup.MAX_ENTRIES_PER_AGENT) {
       const excess = agentMap.size - RecallDedup.MAX_ENTRIES_PER_AGENT;
       const iter = agentMap.keys();
@@ -251,6 +300,8 @@ class RecallDedup {
         }
       }
     }
+
+    this.touchAgent(agentId);
   }
 
   canInject(agentId: string, memoryId: string, currentTurn: number, minGap = 8): boolean {
@@ -804,6 +855,15 @@ export default definePluginEntry({
 
   register(api) {
     const config = (api.pluginConfig ?? {}) as unknown as PluginConfig;
+
+    /**
+     * Cleanup callbacks invoked by the registered service's `stop` on
+     * plugin unload / host shutdown. Every long-lived resource (timers,
+     * access trackers with pending writes, etc.) must push a disposer
+     * here so a hot-reload does not leak duplicate intervals or drop
+     * pending tier-transition writes silently.
+     */
+    const disposables: Array<() => void | Promise<void>> = [];
     const logDebug = (msg: string) => api.logger.debug?.(msg);
 
     if (!config.embedding?.apiKey) {
@@ -873,9 +933,6 @@ export default definePluginEntry({
         }
       },
     };
-
-    // Recall dedup tracker
-    const recallDedup = new RecallDedup();
 
     // Settings
     const autoCapture = config.autoCapture !== false;
@@ -963,6 +1020,34 @@ export default definePluginEntry({
       return ctrl;
     }
 
+    /**
+     * Evicts all per-agent in-memory state when RecallDedup's agent-level
+     * LRU kicks an idle agent out. Must stay sync (no await) because
+     * eviction fires from inside RecallDedup's insertion-order enforcement.
+     * Tracker flush is fire-and-forget — losing a few pending access-count
+     * updates for a long-idle agent is acceptable.
+     */
+    const evictAgent = (agentId: string): void => {
+      const tracker = accessTrackers.get(agentId);
+      if (tracker) {
+        accessTrackers.delete(agentId);
+        tracker
+          .flush()
+          .catch((err) =>
+            api.logger.error(
+              `vector-memory: [${agentId}] access-tracker flush on evict failed: ${String(err)}`,
+            ),
+          )
+          .finally(() => tracker.destroy());
+      }
+      admissionControllers.delete(agentId);
+      logDebug(`vector-memory: [${agentId}] per-agent state evicted (LRU)`);
+    };
+
+    // Recall dedup tracker. Wired to `evictAgent` so RecallDedup's LRU
+    // also tears down the other per-agent subsystems atomically.
+    const recallDedup = new RecallDedup({ onAgentEvicted: evictAgent });
+
     // Background maintenance: run decay + tier evaluation periodically
     const maintenanceIntervalMs = (config.maintenanceIntervalMinutes ?? 60) * 60_000;
     const maintenanceTimer = setInterval(async () => {
@@ -1042,6 +1127,7 @@ export default definePluginEntry({
     if (typeof maintenanceTimer === "object" && "unref" in maintenanceTimer) {
       maintenanceTimer.unref();
     }
+    disposables.push(() => clearInterval(maintenanceTimer));
 
     // ========================================================================
     // Workspace & Daily Memory (curated markdown auto-recall)
@@ -1169,6 +1255,7 @@ export default definePluginEntry({
         if (typeof t === "object" && "unref" in t) {
           t.unref();
         }
+        disposables.push(() => clearInterval(t));
       }
       if (dailyScope.enabled) {
         const t = setInterval(() => {
@@ -1179,8 +1266,56 @@ export default definePluginEntry({
         if (typeof t === "object" && "unref" in t) {
           t.unref();
         }
+        disposables.push(() => clearInterval(t));
       }
     }
+
+    /**
+     * Teardown order on plugin unload:
+     * 1. Clear all intervals (prevents a stray tick during flush below).
+     * 2. Flush & destroy all access trackers so pending access-count
+     *    writes don't get dropped.
+     * 3. Clear the two Maps so a subsequent re-`register()` (hot reload)
+     *    starts from an empty state rather than resurrecting stale
+     *    handles whose underlying LanceDB store may have been torn down.
+     */
+    disposables.push(async () => {
+      const flushes: Promise<void>[] = [];
+      for (const [agentId, tracker] of accessTrackers) {
+        flushes.push(
+          tracker.flush().catch((err) => {
+            api.logger.error(
+              `vector-memory: [${agentId}] access-tracker flush on unload failed: ${String(err)}`,
+            );
+          }),
+        );
+      }
+      await Promise.allSettled(flushes);
+      for (const tracker of accessTrackers.values()) {
+        tracker.destroy();
+      }
+      accessTrackers.clear();
+      admissionControllers.clear();
+    });
+
+    api.registerService({
+      id: "vector-memory-runtime",
+      start: () => {
+        // Intentional no-op: resources are provisioned eagerly in
+        // register() so tools/hooks can run from the first turn. The
+        // service exists solely to host the teardown path.
+      },
+      stop: async () => {
+        for (const dispose of disposables) {
+          try {
+            await dispose();
+          } catch (err) {
+            api.logger.error(`vector-memory: dispose step failed: ${String(err)}`);
+          }
+        }
+        disposables.length = 0;
+      },
+    });
 
     api.logger.info(
       `vector-memory: plugin registered (capture=${autoCapture}, recall=${autoRecall}, admission=${admissionConfig.enabled}, workspace=${workspaceScope.enabled}, daily=${dailyScope.enabled}, db=${basePath})`,
@@ -1190,11 +1325,24 @@ export default definePluginEntry({
     // Agent Tools — each agent can only operate on its own DB
     // ========================================================================
 
+    // Resolve the same regex-rules pipeline the before_prompt_build hook
+    // uses, so tool-driven recall output is post-processed identically to
+    // auto-injected recall blocks. Rules are loaded once at registration
+    // time; hot-editing the rule file requires a plugin reload.
+    const toolRecallRegexRules = loadRegexRules((msg) => logDebug(msg));
+    const toolApplyRecallRules =
+      toolRecallRegexRules.length > 0
+        ? (s: string) => applyRegexRules(s, toolRecallRegexRules)
+        : undefined;
+
     registerAllVectorMemoryTools(api as { registerTool: (tool: unknown) => void }, {
       storeManager,
       embedder,
       retrievalConfig,
       log: (msg) => api.logger.info(msg),
+      workspaceScope,
+      dailyScope,
+      applyRecallRules: toolApplyRecallRules,
     });
 
     // ========================================================================
@@ -1240,7 +1388,11 @@ export default definePluginEntry({
                   return;
                 }
               }
-            } catch {}
+            } catch (err) {
+              logDebug(
+                `vector-memory: [${agentId}] capture: noise prototype check failed (continuing with extraction): ${String(err)}`,
+              );
+            }
           }
 
           const store = storeManager.getStore(agentId);
@@ -1286,7 +1438,11 @@ export default definePluginEntry({
                 const msgVector = await embedder.embed(lastMsg);
                 noiseBank.learn(msgVector);
               }
-            } catch {}
+            } catch (err) {
+              logDebug(
+                `vector-memory: [${agentId}] capture: noise bank learn failed (non-fatal): ${String(err)}`,
+              );
+            }
           }
 
           if (stats.created > 0 || stats.merged > 0) {
