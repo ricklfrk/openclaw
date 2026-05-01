@@ -125,6 +125,7 @@ fi
 GATEWAY_PLIST="$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
 GATEWAY_PORT=18789
 GATEWAY_PROBE_URL="http://127.0.0.1:$GATEWAY_PORT/"
+CONTROL_UI_ASSETS_MISSING_TEXT="Control UI assets not found"
 
 # Single best-effort HTTP probe with a short timeout. Any 2xx/3xx/4xx response
 # from the server means "something is listening and replying", which is what
@@ -132,6 +133,15 @@ GATEWAY_PROBE_URL="http://127.0.0.1:$GATEWAY_PORT/"
 probe_gateway() {
   curl -sS -o /dev/null -m 2 -w "%{http_code}" "$GATEWAY_PROBE_URL" 2>/dev/null \
     | grep -Eq '^[1-5][0-9][0-9]$'
+}
+
+control_ui_assets_missing() {
+  local body
+  body="$(curl -sS -m 3 "$GATEWAY_PROBE_URL" 2>/dev/null || true)"
+  case "$body" in
+    *"$CONTROL_UI_ASSETS_MISSING_TEXT"*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 log "Waiting for gateway on port $GATEWAY_PORT..."
@@ -251,4 +261,8 @@ if [ -f "$NODE_PLIST" ]; then
     launchctl kickstart -k "gui/$UID/ai.openclaw.node" 2>/dev/null || true
     log "Node launch agent already loaded (kickstarted)"
   fi
+fi
+
+if control_ui_assets_missing; then
+  fail "Gateway is running but Control UI assets are missing. Run pnpm ui:build and rerun this script."
 fi
