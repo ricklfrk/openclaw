@@ -1,0 +1,12 @@
+{
+  "id": "idle-reminder",
+  "name": "Idle Reminder",
+  "description": "Sends a follow-up prompt when the agent goes idle after a conversation, using the primary model with full session context.",
+  "version": "0.1.0",
+  "enabledByDefault": true,
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

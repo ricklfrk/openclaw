@@ -289,7 +289,7 @@ describe("signal mention gating", () => {
 describe("renderSignalMentions", () => {
   const PLACEHOLDER = "\uFFFC";
 
-  it("returns the original message when no mentions are provided", () => {
+  it("returns the original message when no mentions", () => {
     const message = `${PLACEHOLDER} ping`;
     expect(renderSignalMentions(message, null)).toBe(message);
     expect(renderSignalMentions(message, [])).toBe(message);

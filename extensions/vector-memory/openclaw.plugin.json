@@ -1,0 +1,396 @@
+{
+  "id": "vector-memory",
+  "name": "Vector Memory",
+  "description": "Supplementary vector recall with LanceDB, multi-provider embedding, hybrid BM25+rerank retrieval, and per-agent storage. Designed to augment memory-core.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "embedding": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": ["openai-compatible", "azure-openai"]
+          },
+          "apiKey": { "type": "string", "minLength": 1 },
+          "model": { "type": "string" },
+          "baseURL": { "type": "string" },
+          "dimensions": { "type": "integer", "minimum": 1 },
+          "taskQuery": { "type": "string" },
+          "taskPassage": { "type": "string" },
+          "normalized": { "type": "boolean" },
+          "chunking": { "type": "boolean", "default": true },
+          "apiVersion": { "type": "string" }
+        },
+        "required": ["apiKey"]
+      },
+      "llm": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "apiKey": { "type": "string" },
+          "model": { "type": "string", "default": "gemini-3.1-flash-lite-preview" },
+          "baseURL": { "type": "string" },
+          "timeoutMs": { "type": "integer", "minimum": 1, "default": 30000 }
+        }
+      },
+      "dbPath": { "type": "string" },
+      "userName": {
+        "type": "string",
+        "description": "Human-readable name for the human speaker in extraction prompts. Default fallback for all agents unless overridden by userNames."
+      },
+      "userNames": {
+        "type": "object",
+        "additionalProperties": { "type": ["string", "null"] },
+        "description": "Per-agent override for the human speaker name. Map agentId → name. Set value to null to mark an agent as multi-user group chat (prompt will ask the LLM to identify each speaker from content)."
+      },
+      "autoCapture": { "type": "boolean", "default": true },
+      "autoRecall": { "type": "boolean", "default": true },
+      "autoRecallMaxItems": { "type": "integer", "minimum": 1, "maximum": 20, "default": 3 },
+      "autoRecallMaxChars": { "type": "integer", "minimum": 64, "maximum": 8000, "default": 600 },
+      "autoRecallMinLength": { "type": "integer", "minimum": 1, "maximum": 200, "default": 10 },
+      "autoRecallTimeoutMs": {
+        "type": "integer",
+        "minimum": 500,
+        "maximum": 30000,
+        "default": 5000
+      },
+      "autoRecallExcludeAgents": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": [],
+        "description": "Agent IDs to exclude from auto-recall (e.g. cron, background agents)"
+      },
+      "autoRecallSkipHeartbeat": {
+        "type": "boolean",
+        "default": true,
+        "description": "Skip auto-recall injection on heartbeat turns (ctx.trigger === 'heartbeat'). Heartbeats have no fresh user query, so retrieval is pure waste and any injection would be stripped on the next real turn anyway. Default: true."
+      },
+      "autoRecallStripOldAfterIdleMs": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 86400000,
+        "default": 300000,
+        "description": "Rolling-window strip: if the gap since the last LLM call exceeds this value, remove <relevant-memories> blocks from user messages older than autoRecallKeepRecentInjections. Default 300000 (5 min) aligns with Anthropic's default prompt-cache TTL so stripping incurs no extra cache penalty. Set to 0 to disable."
+      },
+      "autoRecallKeepRecentInjections": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 50,
+        "default": 5,
+        "description": "Keep the most-recent N user messages' <relevant-memories> injections intact during idle-based stripping."
+      },
+      "extractMinMessages": { "type": "integer", "minimum": 1, "maximum": 100, "default": 4 },
+      "extractMaxChars": { "type": "integer", "minimum": 256, "maximum": 100000, "default": 8000 },
+      "retrieval": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": { "type": "string", "enum": ["hybrid", "vector"], "default": "hybrid" },
+          "vectorWeight": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.7 },
+          "bm25Weight": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.3 },
+          "minScore": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.3 },
+          "rerank": {
+            "type": "string",
+            "enum": ["cross-encoder", "local-onnx", "lightweight", "none"],
+            "default": "cross-encoder",
+            "description": "Reranker mode. 'cross-encoder' calls a remote rerank API (requires rerankApiKey+rerankProvider). 'local-onnx' runs BAAI/bge-reranker-v2-m3 (or another ONNX cross-encoder) in-process via @huggingface/transformers — no API key, ~580MB first-run download, ~500–800MB RSS, ~80–250ms per 10–20 docs on CPU. 'lightweight' is the zero-dep BM25-lite fallback. 'none' disables reranking."
+          },
+          "rerankApiKey": { "type": "string" },
+          "rerankModel": {
+            "type": "string",
+            "default": "jina-reranker-v3",
+            "description": "Model identifier. For rerank='cross-encoder' use the provider's model slug (e.g. 'jina-reranker-v3'). For rerank='local-onnx' use a HuggingFace repo id exposing ONNX weights (default: 'onnx-community/bge-reranker-v2-m3-ONNX')."
+          },
+          "rerankEndpoint": { "type": "string", "default": "https://api.jina.ai/v1/rerank" },
+          "rerankProvider": {
+            "type": "string",
+            "enum": ["jina", "siliconflow", "voyage", "pinecone", "dashscope", "tei"],
+            "default": "jina"
+          },
+          "candidatePoolSize": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 100,
+            "default": 10,
+            "description": "Candidates pulled from vector+BM25 fusion and fed into rerank. Rerank sees the whole pool, so latency is linear in this number (~80-150ms/doc on local-onnx bge-reranker-v2-m3 q8, Apple Silicon CPU). Default 10 (× 3 parallel scopes = 30 pair inferences ≈ 3-4s steady-state); raise for better ranking quality at higher prompt-build cost."
+          },
+          "recencyHalfLifeDays": { "type": "number", "minimum": 0, "maximum": 365, "default": 14 },
+          "recencyWeight": { "type": "number", "minimum": 0, "maximum": 0.5, "default": 0.1 },
+          "filterNoise": { "type": "boolean", "default": true },
+          "lengthNormAnchor": { "type": "integer", "minimum": 0, "maximum": 5000, "default": 500 },
+          "hardMinScore": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.4 },
+          "timeDecayHalfLifeDays": { "type": "number", "minimum": 0, "maximum": 365, "default": 60 }
+        }
+      },
+      "decay": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "recencyHalfLifeDays": { "type": "number", "minimum": 1, "maximum": 365, "default": 30 },
+          "recencyWeight": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.4 },
+          "frequencyWeight": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.3 },
+          "intrinsicWeight": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.3 },
+          "staleThreshold": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.3 }
+        }
+      },
+      "tiers": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "coreAccessThreshold": { "type": "integer", "minimum": 1, "maximum": 100, "default": 10 },
+          "coreCompositeThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.7
+          },
+          "coreImportanceThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.8
+          },
+          "peripheralCompositeThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.15
+          },
+          "peripheralAgeDays": { "type": "integer", "minimum": 1, "maximum": 365, "default": 60 },
+          "workingAccessThreshold": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 3
+          },
+          "workingCompositeThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.4
+          }
+        }
+      },
+      "admission": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "default": false },
+          "preset": {
+            "type": "string",
+            "enum": ["balanced", "conservative", "high-recall"],
+            "default": "balanced"
+          },
+          "rejectThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
+          "admitThreshold": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      },
+      "noisePrototypes": { "type": "boolean", "default": true },
+      "maintenanceIntervalMinutes": {
+        "type": "integer",
+        "minimum": 5,
+        "maximum": 1440,
+        "default": 60
+      },
+      "workspaceMemory": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Index workspace memory/*.md (excluding daily journals) into a per-agent __workspace__ LanceDB; injected as <from-workspace-memory> in before_prompt_build.",
+        "properties": {
+          "enabled": { "type": "boolean", "default": false },
+          "memoryDir": {
+            "type": "string",
+            "default": "memory",
+            "description": "Subdirectory under the agent workspace to index. Default: 'memory' (i.e. {workspace}/memory/)."
+          },
+          "chunking": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "maxChunkSize": {
+                "type": "integer",
+                "minimum": 100,
+                "maximum": 16000,
+                "default": 500
+              },
+              "minChunkSize": { "type": "integer", "minimum": 50, "maximum": 4000, "default": 100 },
+              "overlapSize": { "type": "integer", "minimum": 0, "maximum": 2000, "default": 100 },
+              "maxLinesPerChunk": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 500,
+                "default": 20
+              },
+              "semanticSplit": { "type": "boolean", "default": true }
+            }
+          },
+          "recall": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "candidatePool": { "type": "integer", "minimum": 1, "maximum": 100, "default": 10 },
+              "maxItems": { "type": "integer", "minimum": 1, "maximum": 20, "default": 3 },
+              "maxChars": { "type": "integer", "minimum": 64, "maximum": 32000, "default": 4500 },
+              "contextWindowChunks": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10,
+                "default": 1
+              },
+              "minScore": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.3,
+                "description": "Entry gate applied at vector search AND after vec+BM25 fusion. Also enforces a raw-signal floor (vec >= 0.45 OR bm25 >= 0.5) to drop BM25-only noise — matches the conversations retriever."
+              },
+              "hardMinScore": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.4,
+                "description": "Post-rerank exit gate. Items whose blended rerank+fusion score is below this are dropped. 0 disables the gate. Matches the conversations retriever's hardMinScore."
+              },
+              "rerankWeight": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.6,
+                "description": "Blend weight for the cross-encoder rerank score vs the fused vector+BM25 (time-decay-adjusted) score. 0 disables rerank for this scope; 1 uses rerank score only. Default 0.6 matches the conversations retriever."
+              },
+              "timeDecay": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": { "type": "boolean", "default": false },
+                  "halfLifeDays": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 3650,
+                    "default": 365
+                  }
+                }
+              }
+            }
+          },
+          "sync": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "intervalMinutes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1440,
+                "default": 10
+              },
+              "onStartup": { "type": "boolean", "default": true }
+            }
+          },
+          "excludeGlobs": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": ["memory/.archived/**", "memory/.dreams/**", "memory/dreaming/**"],
+            "description": "Relative glob patterns (from workspace root) to skip while indexing."
+          }
+        }
+      },
+      "dailyMemory": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Index workspace memory/YYYY-MM-DD(-slug)?.md journal files into a per-agent __dailies__ LanceDB; injected as <from-daily-memory> in before_prompt_build. Uses filename-date-based time decay.",
+        "properties": {
+          "enabled": { "type": "boolean", "default": false },
+          "chunking": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "maxChunkSize": {
+                "type": "integer",
+                "minimum": 100,
+                "maximum": 16000,
+                "default": 500
+              },
+              "minChunkSize": { "type": "integer", "minimum": 50, "maximum": 4000, "default": 100 },
+              "overlapSize": { "type": "integer", "minimum": 0, "maximum": 2000, "default": 100 },
+              "maxLinesPerChunk": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 500,
+                "default": 20
+              },
+              "semanticSplit": { "type": "boolean", "default": true }
+            }
+          },
+          "recall": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "candidatePool": { "type": "integer", "minimum": 1, "maximum": 100, "default": 10 },
+              "maxItems": { "type": "integer", "minimum": 1, "maximum": 20, "default": 3 },
+              "maxChars": { "type": "integer", "minimum": 64, "maximum": 32000, "default": 4500 },
+              "contextWindowChunks": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10,
+                "default": 1
+              },
+              "minScore": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.3,
+                "description": "Entry gate applied at vector search AND after vec+BM25 fusion. Also enforces a raw-signal floor (vec >= 0.45 OR bm25 >= 0.5) to drop BM25-only noise — matches the conversations retriever."
+              },
+              "hardMinScore": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.4,
+                "description": "Post-rerank exit gate. Items whose blended rerank+fusion score is below this are dropped. 0 disables the gate. Matches the conversations retriever's hardMinScore."
+              },
+              "rerankWeight": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.6,
+                "description": "Blend weight for the cross-encoder rerank score vs the fused vector+BM25 (time-decay-adjusted) score. 0 disables rerank for this scope; 1 uses rerank score only. Default 0.6 matches the conversations retriever."
+              },
+              "timeDecay": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": { "type": "boolean", "default": true },
+                  "halfLifeDays": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 3650,
+                    "default": 30
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": ["filename", "mtime"],
+                    "default": "filename",
+                    "description": "Where to pull the file's effective date from: 'filename' parses YYYY-MM-DD from the basename; 'mtime' uses the file's modification time."
+                  }
+                }
+              }
+            }
+          },
+          "sync": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "intervalMinutes": { "type": "integer", "minimum": 1, "maximum": 1440, "default": 5 },
+              "onStartup": { "type": "boolean", "default": true }
+            }
+          }
+        }
+      }
+    },
+    "required": ["embedding"]
+  }
+}

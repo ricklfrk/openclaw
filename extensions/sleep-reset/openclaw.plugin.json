@@ -1,0 +1,38 @@
+{
+  "id": "sleep-reset",
+  "name": "Sleep Reset",
+  "description": "Flag sessions for a /new-style reset when the user goes idle during their configured sleep window. Uses the core pending-reset flag contract so heartbeats do not keep a stale session alive overnight.",
+  "version": "0.1.0",
+  "enabledByDefault": true,
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "timezone": {
+        "type": "string",
+        "description": "IANA timezone used for the sleep window. Defaults to Asia/Hong_Kong."
+      },
+      "windowStartHour": {
+        "type": "number",
+        "description": "Hour (0–23, local time) when the morning flag window opens."
+      },
+      "windowEndHour": {
+        "type": "number",
+        "description": "Hour (0–23, local time) when the morning flag window closes. Exclusive upper bound."
+      },
+      "minIdleHours": {
+        "type": "number",
+        "description": "Minimum hours since the last real user turn before a session is flagged for reset."
+      },
+      "checkIntervalMinutes": {
+        "type": "number",
+        "description": "How often, in minutes, the plugin scans sessions during the window."
+      },
+      "agentIds": {
+        "type": "array",
+        "description": "Explicit list of agent ids to scan. Defaults to [\"main\"].",
+        "items": { "type": "string" }
+      }
+    }
+  }
+}

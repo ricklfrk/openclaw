@@ -71,6 +71,7 @@ describe("anthropic-vertex provider plugin", () => {
         baseUrl: "https://europe-west4-aiplatform.googleapis.com",
         headers: { "x-test-header": "1" },
         models: [
+          expect.objectContaining({ id: "claude-opus-4-7" }),
           expect.objectContaining({ id: "claude-opus-4-6" }),
           expect.objectContaining({ id: "claude-sonnet-4-6" }),
         ],
