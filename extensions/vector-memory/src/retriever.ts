@@ -38,6 +38,17 @@ export interface RetrievalContext {
   limit: number;
   category?: string;
   entityTags?: string[];
+  /**
+   * Optional BM25-side query. When set, the LanceDB FTS / BM25 path uses
+   * this instead of `query`, while vector embedding still uses `query`.
+   *
+   * Use case: caller has already cleaned the user query for the embedder
+   * (URLs/envelope stripped, NFKC) and separately wants to inject keyword
+   * variants (e.g. `POCKET4` ↔ `pocket 4`) so FTS finds the canonical form
+   * stored in memory. The vector path doesn't need the variants because
+   * embeddings are robust to those forms; BM25 is not.
+   */
+  bm25Query?: string;
 }
 
 export interface RetrievalResult extends MemorySearchResult {
@@ -112,12 +123,37 @@ function cosineSimilarity(a: number[], b: number[]): number {
 /**
  * Tokenize text for BM25 scoring.
  * Splits on whitespace + punctuation; adds CJK character bigrams.
+ *
+ * Mixed alpha+digit runs (e.g. `POCKET4`, `iPhone15Pro`, `S24Ultra`) are
+ * additionally split at letter↔digit and camelCase boundaries, so the
+ * token list contains both the joined form AND the parts. This lets BM25
+ * match memories that store the canonical spaced/title-cased form when
+ * the user typed the joined form (or vice versa).
  */
 export function tokenize(text: string): string[] {
   const tokens: string[] = [];
-  // Latin / alphanumeric tokens
-  for (const m of text.toLowerCase().matchAll(/[a-z0-9\u00c0-\u024f]+/g)) {
-    tokens.push(m[0]);
+  const lower = text.toLowerCase();
+  // Latin / alphanumeric runs.
+  for (const m of lower.matchAll(/[a-z0-9\u00c0-\u024f]+/g)) {
+    const run = m[0];
+    tokens.push(run);
+    // If the run mixes letters + digits OR contained a case boundary in
+    // the original (camel/Pascal), emit the split parts too. We re-derive
+    // the case boundary from the original text via the run's index.
+    const original = text.slice(m.index ?? 0, (m.index ?? 0) + run.length);
+    const split = original
+      .replace(/([A-Za-z])([0-9])/g, "$1 $2")
+      .replace(/([0-9])([A-Za-z])/g, "$1 $2")
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+      .toLowerCase();
+    if (split !== run) {
+      for (const piece of split.split(/\s+/)) {
+        if (piece.length > 0 && piece !== run) {
+          tokens.push(piece);
+        }
+      }
+    }
   }
   // CJK bigrams (Chinese / Japanese / Korean)
   const cjk = text.replace(
@@ -370,7 +406,7 @@ export class MemoryRetriever {
   ) {}
 
   async retrieve(context: RetrievalContext): Promise<RetrievalResult[]> {
-    const { query, limit, category, entityTags } = context;
+    const { query, limit, category, entityTags, bm25Query } = context;
     const safeLimit = Math.min(Math.max(limit, 1), 20);
 
     const tStart = performance.now();
@@ -388,7 +424,7 @@ export class MemoryRetriever {
     if (this.config.mode === "vector" || !this.store.hasFtsSupport) {
       results = await this.vectorOnlyRetrieval(query, safeLimit, category);
     } else {
-      results = await this.hybridRetrieval(query, safeLimit, category);
+      results = await this.hybridRetrieval(query, safeLimit, category, bm25Query);
     }
 
     if (entityTags && entityTags.length > 0) {
@@ -449,6 +485,7 @@ export class MemoryRetriever {
     query: string,
     limit: number,
     category?: string,
+    bm25Query?: string,
   ): Promise<RetrievalResult[]> {
     const candidatePoolSize = Math.max(this.config.candidatePoolSize, limit * 2);
 
@@ -457,9 +494,10 @@ export class MemoryRetriever {
     this.lastTimings.embed = Math.round(performance.now() - tEmbed);
 
     const tSearch = performance.now();
+    const effectiveBm25Query = bm25Query && bm25Query.length > 0 ? bm25Query : query;
     const [vectorResults, bm25Results] = await Promise.all([
       this.runVectorSearch(queryVector, candidatePoolSize, category),
-      this.runBM25Search(query, candidatePoolSize, category),
+      this.runBM25Search(effectiveBm25Query, candidatePoolSize, category),
     ]);
     this.lastTimings.vectorAndBm25 = Math.round(performance.now() - tSearch);
 

@@ -33,6 +33,38 @@ describe("tokenize", () => {
   it("returns empty for empty string", () => {
     expect(tokenize("")).toEqual([]);
   });
+
+  it("splits ALL-CAPS+digit runs (POCKET4 → pocket4 + pocket + 4)", () => {
+    const tokens = tokenize("我查一下POCKET4哪裡有賣");
+    expect(tokens).toContain("pocket4");
+    expect(tokens).toContain("pocket");
+    expect(tokens).toContain("4");
+  });
+
+  it("splits Pascal+digit runs (S24Ultra → s24ultra + s + 24 + ultra)", () => {
+    const tokens = tokenize("S24Ultra 螢幕");
+    expect(tokens).toContain("s24ultra");
+    expect(tokens).toContain("s");
+    expect(tokens).toContain("24");
+    expect(tokens).toContain("ultra");
+  });
+
+  it("splits camelCase runs (iPhone → iphone + i + phone)", () => {
+    const tokens = tokenize("iPhone 15");
+    expect(tokens).toContain("iphone");
+    expect(tokens).toContain("i");
+    expect(tokens).toContain("phone");
+  });
+
+  it("does not over-split already-spaced canonical forms", () => {
+    const tokens = tokenize("DJI Pocket 4");
+    expect(tokens).toContain("dji");
+    expect(tokens).toContain("pocket");
+    expect(tokens).toContain("4");
+    // Each input run becomes one token (no extra split parts), so no
+    // duplicate "d", "j", "i" entries.
+    expect(tokens.filter((t) => t === "d").length).toBe(0);
+  });
 });
 
 describe("localBm25Rerank", () => {
@@ -81,6 +113,20 @@ describe("localBm25Rerank", () => {
     ];
     const reranked = localBm25Rerank("用戶偏好", results);
     expect(reranked[0].entry.text).toContain("用戶偏好");
+  });
+
+  it("matches POCKET4 query against memories storing 'Pocket 4' (alpha+digit split)", () => {
+    // Regression for 2026-05-01 autoRecall miss: user wrote "POCKET4 哪裡有賣"
+    // but memory had "DJI Pocket 4 相機". Pre-fix tokenize emitted "pocket4"
+    // for the query and ["dji", "pocket", "4"] for the memory → zero overlap.
+    // After splitting "POCKET4" → ["pocket4", "pocket", "4"], the "pocket"
+    // and "4" tokens overlap with the memory and BM25 surfaces the match.
+    const results = [
+      makeResult("Random unrelated note about ramen and udon", 0.5),
+      makeResult("DJI Pocket 4 相機 — 旅行用，已買了專用鏡片", 0.5),
+    ];
+    const reranked = localBm25Rerank("POCKET4 哪裡有賣", results);
+    expect(reranked[0].entry.text).toContain("Pocket 4");
   });
 });
 

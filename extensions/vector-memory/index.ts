@@ -53,6 +53,11 @@ import { convertForEmbedding } from "./src/media-convert.js";
 import { neutralizeRecalledMediaRefs } from "./src/neutralize-media-refs.js";
 import { NoisePrototypeBank } from "./src/noise-prototypes.js";
 import {
+  buildAugmentedBm25Query,
+  cleanRecallQuery,
+  expandKeywordVariants,
+} from "./src/query-clean.js";
+import {
   createRetriever,
   type RetrievalConfig,
   DEFAULT_RETRIEVAL_CONFIG,
@@ -1703,13 +1708,24 @@ export default definePluginEntry({
             }
 
             // Use prompt field first (the user's current input), fall back to last user message
-            const query =
+            const rawQuery =
               typeof event.prompt === "string" && event.prompt.length > 0
                 ? event.prompt
                 : lastUserMessage(event.messages ?? []);
 
+            // Strip URLs / fenced code / envelope JSON / NFKC. Embedder sees
+            // this; without it, a 11-char "POCKET4 哪裡有賣" gets drowned in
+            // a YouTube URL + 200 chars of `Conversation info` JSON, and
+            // recall returns 0 hits even though the memory exists.
+            const query = cleanRecallQuery(rawQuery);
+            // Variants like POCKET4 → ["pocket4", "pocket 4", "pocket", "4"].
+            // Embedder is robust to spacing/casing; LanceDB FTS / BM25 is not,
+            // so we feed the augmented form to BM25 only.
+            const variants = expandKeywordVariants(rawQuery);
+            const bm25Query = buildAugmentedBm25Query(query, variants);
+
             api.logger.info(
-              `vector-memory: [${agentId}] before_prompt_build fired, queryLen=${query?.length ?? 0}, minLen=${autoRecallMinLength}`,
+              `vector-memory: [${agentId}] before_prompt_build fired, queryLen=${query?.length ?? 0} (raw=${rawQuery?.length ?? 0}, variants=${variants.length}), minLen=${autoRecallMinLength}`,
             );
 
             if (!query || query.length < effectiveMinLength(autoRecallMinLength, query)) {
@@ -1745,6 +1761,7 @@ export default definePluginEntry({
                   return await withTimeout(
                     extractedRetriever.retrieve({
                       query,
+                      bm25Query,
                       limit: extractedLimit,
                       entityTags: queryEntityTags.length > 0 ? queryEntityTags : undefined,
                     }),
@@ -1769,6 +1786,7 @@ export default definePluginEntry({
                   return await withTimeout(
                     retrieveScope({
                       query,
+                      bm25Query,
                       recall: workspaceScope.recall,
                       store: storeManager.getWorkspaceStore(agentId),
                       embedder,
@@ -1796,6 +1814,7 @@ export default definePluginEntry({
                   return await withTimeout(
                     retrieveScope({
                       query,
+                      bm25Query,
                       recall: dailyScope.recall,
                       store: storeManager.getDailyStore(agentId),
                       embedder,

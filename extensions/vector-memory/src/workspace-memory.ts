@@ -799,6 +799,13 @@ export interface ScopedRetrieveOptions {
    * before overlap dedup + top-K selection.
    */
   rerank?: RerankPassagesConfig;
+  /**
+   * Optional BM25-side query. When set, LanceDB's FTS / BM25 path uses
+   * this instead of `query`, while vector embedding still uses `query`.
+   * See `RetrievalContext.bm25Query` in retriever.ts for the rationale
+   * (POCKET4 ↔ Pocket 4 lexical mismatch).
+   */
+  bm25Query?: string;
 }
 
 /**
@@ -830,12 +837,13 @@ export async function retrieveScope(opts: ScopedRetrieveOptions): Promise<Scoped
     return [];
   }
 
+  const bm25Query = opts.bm25Query && opts.bm25Query.length > 0 ? opts.bm25Query : query;
   const [vectorHits, bm25Hits] = await Promise.all([
     store.vectorSearch(queryVec, candidatePool, recall.minScore).catch((err) => {
       log(`vector-memory/workspace: vectorSearch failed: ${String(err)}`);
       return [] as MemorySearchResult[];
     }),
-    store.bm25Search(query, candidatePool).catch((err) => {
+    store.bm25Search(bm25Query, candidatePool).catch((err) => {
       log(`vector-memory/workspace: bm25Search failed: ${String(err)}`);
       return [] as MemorySearchResult[];
     }),
