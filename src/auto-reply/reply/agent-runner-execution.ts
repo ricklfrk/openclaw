@@ -18,7 +18,11 @@ import {
   isCliRuntimeAlias,
   resolveCliRuntimeExecutionProvider,
 } from "../../agents/model-runtime-aliases.js";
-import { isCliProvider, resolveModelRefFromString } from "../../agents/model-selection.js";
+import {
+  isCliProvider,
+  resolveDefaultModelForAgent,
+  resolveModelRefFromString,
+} from "../../agents/model-selection.js";
 import {
   BILLING_ERROR_USER_MESSAGE,
   formatRateLimitOrOverloadedErrorCopy,
@@ -74,6 +78,7 @@ import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import { resolveRunAuthProfile } from "./agent-runner-auth-profile.js";
 import {
   buildEmbeddedRunExecutionParams,
+  resolveFallbackRetryPrompt,
   resolveQueuedReplyRuntimeConfig,
   resolveModelFallbackOptions,
 } from "./agent-runner-utils.js";
@@ -1186,6 +1191,7 @@ export async function runAgentTurnWithFallback(params: {
     model: string,
   ): Promise<(() => Promise<void>) | undefined> => {
     if (
+      params.isHeartbeat ||
       !params.sessionKey ||
       !params.activeSessionStore ||
       (provider === params.followupRun.run.provider && model === params.followupRun.run.model)
@@ -1354,8 +1360,26 @@ export async function runAgentTurnWithFallback(params: {
       const onToolResult = params.opts?.onToolResult;
       const outcomePlan = buildAgentRuntimeOutcomePlan();
       const runLane = CommandLane.Main;
+      let fallbackAttemptIndex = 0;
+      const baseFallbackOpts = resolveModelFallbackOptions(effectiveRun, runtimeConfig);
+      // Heartbeat runs use a dedicated model (e.g. gcli); on failure, fall back
+      // to primary -> normal fallbacks, same chain as a regular user turn.
+      const heartbeatFallbacksOverride = params.isHeartbeat
+        ? (() => {
+            const primary = resolveDefaultModelForAgent({
+              cfg: effectiveRun.config,
+              agentId: effectiveRun.agentId,
+            });
+            const primaryRef = `${primary.provider}/${primary.model}`;
+            const normalFallbacks = baseFallbackOpts.fallbacksOverride ?? [];
+            return [primaryRef, ...normalFallbacks.filter((fallback) => fallback !== primaryRef)];
+          })()
+        : undefined;
       const fallbackResult = await runWithModelFallback<EmbeddedAgentRunResult>({
-        ...resolveModelFallbackOptions(effectiveRun, runtimeConfig),
+        ...baseFallbackOpts,
+        ...(heartbeatFallbacksOverride
+          ? { fallbacksOverride: heartbeatFallbacksOverride }
+          : undefined),
         runId,
         sessionId: params.followupRun.run.sessionId,
         lane: runLane,
@@ -1375,6 +1399,8 @@ export async function runAgentTurnWithFallback(params: {
           return classification;
         },
         run: async (provider, model, runOptions) => {
+          const isFallbackRetry = fallbackAttemptIndex > 0;
+          fallbackAttemptIndex += 1;
           // Notify that model selection is complete (including after fallback).
           // This allows responsePrefix template interpolation with the actual model.
           params.opts?.onModelSelected?.({
@@ -1587,10 +1613,19 @@ export async function runAgentTurnWithFallback(params: {
                   ? { agentHarnessId: agentRuntimeOverride }
                   : {}),
                 sandboxSessionKey: params.runtimePolicySessionKey,
-                prompt: params.commandBody,
+                prompt: resolveFallbackRetryPrompt({
+                  body: params.commandBody,
+                  isFallbackRetry,
+                }),
                 transcriptPrompt: params.transcriptCommandBody,
                 currentTurnContext: params.followupRun.currentTurnContext,
                 extraSystemPrompt: params.followupRun.run.extraSystemPrompt,
+                inputProvenance: isFallbackRetry
+                  ? {
+                      kind: "internal_system",
+                      sourceTool: "model_fallback",
+                    }
+                  : undefined,
                 sourceReplyDeliveryMode: params.followupRun.run.sourceReplyDeliveryMode,
                 forceMessageTool:
                   params.followupRun.run.sourceReplyDeliveryMode === "message_tool_only",

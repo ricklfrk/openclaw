@@ -183,6 +183,32 @@ export async function getStatusSummary(
     storeCache.set(storePath, store);
     return store;
   };
+  // Resolve per-agent contextTokens from config (takes priority over session store).
+  const agentCfgContextTokensCache = new Map<string, number | undefined>();
+  const resolveAgentCfgContextTokens = (agentId: string | undefined): number | undefined => {
+    if (!agentId) {
+      return undefined;
+    }
+    const key = agentId.toLowerCase();
+    if (agentCfgContextTokensCache.has(key)) {
+      return agentCfgContextTokensCache.get(key);
+    }
+    const entry = (cfg.agents?.list ?? []).find(
+      (e): e is { id: string; contextTokens?: number } =>
+        e != null &&
+        typeof e === "object" &&
+        "id" in e &&
+        typeof (e as { id: unknown }).id === "string" &&
+        (e as { id: string }).id.toLowerCase() === key,
+    );
+    const val =
+      typeof entry?.contextTokens === "number" && entry.contextTokens > 0
+        ? entry.contextTokens
+        : undefined;
+    agentCfgContextTokensCache.set(key, val);
+    return val;
+  };
+
   const buildSessionRows = (
     store: Record<string, SessionEntry | undefined>,
     opts: { agentIdOverride?: string } = {},
@@ -196,12 +222,14 @@ export async function getStatusSummary(
         const agentId = opts.agentIdOverride ?? parsedAgentId;
         const resolvedModel = resolveSessionModelRef(cfg, entry, opts.agentIdOverride);
         const model = resolvedModel.model ?? configModel ?? null;
+        // Per-agent config contextTokens takes priority over stale session-store value
+        const agentCfgCtx = resolveAgentCfgContextTokens(agentId);
         const contextTokens =
           resolveContextTokensForModel({
             cfg,
             provider: resolvedModel.provider,
             model,
-            contextTokensOverride: entry?.contextTokens,
+            contextTokensOverride: agentCfgCtx ?? entry?.contextTokens,
             fallbackContextTokens: configContextTokens ?? undefined,
             allowAsyncLoad: false,
           }) ?? null;

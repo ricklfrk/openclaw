@@ -613,9 +613,8 @@ export function createAgentEventHandler({
     const isToolEvent = evt.stream === "tool";
     const isItemEvent = evt.stream === "item";
     const toolVerbose = isToolEvent ? resolveToolVerboseLevel(evt.runId, sessionKey) : "off";
-    // Channel/node subscribers respect verbose; authenticated Control UI
-    // recipients need tool result payloads to render live tool cards.
-    const channelToolPayload =
+    // Build tool payload: strip result/partialResult unless verbose=full.
+    const toolPayload =
       isToolEvent && toolVerbose !== "full"
         ? (() => {
             const data = evt.data ? { ...evt.data } : {};
@@ -648,15 +647,18 @@ export function createAgentEventHandler({
       if (toolPhase === "start" && isControlUiVisible && sessionKey && !isAborted) {
         flushBufferedChatDeltaIfNeeded(sessionKey, clientRunId, evt.runId, evt.seq);
       }
-      // Always broadcast tool events to registered WS recipients with
-      // tool-events capability, regardless of verboseLevel. The verbose
-      // setting only controls whether tool details are sent as channel
-      // messages to messaging surfaces (Telegram, Discord, etc.).
+      // Broadcast tool events to ALL WS clients so operator UIs (Mac app)
+      // always see them. The verbose setting controls messaging-channel
+      // delivery (Signal, WhatsApp via onToolResult), not local UI display.
+      broadcast("agent", toolPayload);
+      // Also send to registered tool-events recipients (web chat clients
+      // that declared the capability). Recipients that already got the
+      // broadcast will dedup by seq.
       const recipients = toolEventRecipients.get(evt.runId);
       if (isControlUiVisible && recipients && recipients.size > 0) {
         broadcastToConnIds(
           "agent",
-          sessionKey ? { ...agentPayload, ...buildSessionEventSnapshot(sessionKey) } : agentPayload,
+          sessionKey ? { ...toolPayload, ...buildSessionEventSnapshot(sessionKey) } : toolPayload,
           recipients,
         );
       }
@@ -670,7 +672,7 @@ export function createAgentEventHandler({
         if (sessionSubscribers.size > 0) {
           broadcastToConnIds(
             "session.tool",
-            { ...agentPayload, ...buildSessionEventSnapshot(sessionKey) },
+            { ...toolPayload, ...buildSessionEventSnapshot(sessionKey) },
             sessionSubscribers,
             { dropIfSlow: true },
           );
@@ -687,17 +689,14 @@ export function createAgentEventHandler({
     }
 
     if (isControlUiVisible && sessionKey) {
-      // Send tool events to node/channel subscribers only when verbose is enabled;
-      // WS clients already received the event above via broadcastToConnIds.
-      if (!isToolEvent || toolVerbose !== "off") {
-        nodeSendToSession(
-          sessionKey,
-          "agent",
-          isToolEvent
-            ? { ...channelToolPayload, ...buildSessionEventSnapshot(sessionKey) }
-            : agentPayload,
-        );
-      }
+      // Always send events (including tool events) to node subscribers (Mac app,
+      // control UI). The verbose setting controls messaging-channel delivery
+      // (Signal, WhatsApp via onToolResult), not local UI display.
+      nodeSendToSession(
+        sessionKey,
+        "agent",
+        isToolEvent ? { ...toolPayload, ...buildSessionEventSnapshot(sessionKey) } : agentPayload,
+      );
       if (
         !isAborted &&
         evt.stream === "assistant" &&

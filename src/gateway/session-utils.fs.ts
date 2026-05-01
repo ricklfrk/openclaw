@@ -1,8 +1,12 @@
 import fs from "node:fs";
 import { StringDecoder } from "node:string_decoder";
+import { isNonConformingRetryPrompt } from "../agents/pi-embedded-runner/run/non-conforming-retry.js";
 import { deriveSessionTotalTokens, hasNonzeroUsage, normalizeUsage } from "../agents/usage.js";
 import { jsonUtf8Bytes } from "../infra/json-utf8-bytes.js";
-import { hasInterSessionUserProvenance } from "../sessions/input-provenance.js";
+import {
+  hasInternalSystemUserProvenance,
+  hasInterSessionUserProvenance,
+} from "../sessions/input-provenance.js";
 import { extractAssistantVisibleText } from "../shared/chat-message-content.js";
 import { normalizeLowercaseStringOrEmpty } from "../shared/string-coerce.js";
 import { stripInlineDirectiveTagsForDisplay } from "../utils/directive-tags.js";
@@ -789,6 +793,19 @@ type TranscriptMessage = {
   provenance?: unknown;
 };
 
+function shouldHideTranscriptUserMessage(
+  message: TranscriptMessage | TranscriptPreviewMessage | undefined,
+): boolean {
+  if (!message || message.role !== "user") {
+    return false;
+  }
+  if (hasInternalSystemUserProvenance(message)) {
+    return true;
+  }
+  const text = extractPreviewText(message as TranscriptPreviewMessage);
+  return isNonConformingRetryPrompt(text);
+}
+
 export function readSessionTitleFieldsFromTranscript(
   sessionId: string,
   storePath: string | undefined,
@@ -985,6 +1002,9 @@ function extractFirstUserMessageFromTranscriptChunk(
       if (msg?.role !== "user") {
         continue;
       }
+      if (shouldHideTranscriptUserMessage(msg)) {
+        continue;
+      }
       if (opts?.includeInterSession !== true && hasInterSessionUserProvenance(msg)) {
         continue;
       }
@@ -1067,6 +1087,9 @@ function readLastMessagePreviewFromOpenTranscript(params: {
       const parsed = JSON.parse(line);
       const msg = parsed?.message as TranscriptMessage | undefined;
       if (msg?.role !== "user" && msg?.role !== "assistant") {
+        continue;
+      }
+      if (shouldHideTranscriptUserMessage(msg)) {
         continue;
       }
       const text = extractTextFromContent(msg.content);
@@ -1495,6 +1518,7 @@ type TranscriptPreviewMessage = {
   role?: string;
   content?: string | TranscriptContentEntry[];
   text?: string;
+  provenance?: unknown;
   toolName?: string;
   tool_name?: string;
 };
@@ -1589,6 +1613,9 @@ function buildPreviewItems(
   for (const message of messages) {
     const toolCall = isToolCall(message);
     const role = normalizeRole(message.role, toolCall);
+    if (shouldHideTranscriptUserMessage(message)) {
+      continue;
+    }
     let text = extractPreviewText(message);
     if (!text) {
       const toolNames = extractToolNames(message);

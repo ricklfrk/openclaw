@@ -1934,6 +1934,8 @@ export type PluginCommandContext = {
   diagnosticsPreviewOnly?: boolean;
   /** Internal diagnostics-only marker for owner-private routed confirmations. */
   diagnosticsPrivateRouted?: boolean;
+  /** Agent id for the session this command was received in */
+  agentId?: string;
   requestConversationBinding: (
     params?: PluginConversationBindingRequestParams,
   ) => Promise<PluginConversationBindingRequestResult>;

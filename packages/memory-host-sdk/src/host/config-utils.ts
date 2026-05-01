@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { normalizeLowercaseStringOrEmpty, normalizeOptionalString } from "./string-utils.js";
 
-export type ChatType = "direct" | "group" | "channel";
+export type ChatType = "direct" | "group" | "channel" | "webhook";
 export type MemoryBackend = "builtin" | "qmd";
 export type MemoryCitationsMode = "auto" | "on" | "off";
 export type MemoryQmdSearchMode = "query" | "search" | "vsearch";

@@ -64,7 +64,7 @@ skill-name/
 
 Every SKILL.md consists of:
 
-- **Frontmatter** (YAML): Contains `name` and `description` fields. These are the only fields that Codex reads to determine when the skill gets used, thus it is very important to be clear and comprehensive in describing what the skill is, and when it should be used.
+- **Frontmatter** (YAML): Contains `name` and `description` fields. The file must start with `---` on line 1; nothing (env vars, comments, etc.) may appear before the opening fence or the skill will not load. These are the only fields that Codex reads to determine when the skill gets used, thus it is very important to be clear and comprehensive in describing what the skill is, and when it should be used.
 - **Body** (Markdown): Instructions and guidance for using the skill. Only loaded AFTER the skill triggers (if at all).
 
 #### Bundled Resources (optional)
@@ -317,6 +317,8 @@ If you used `--examples`, delete any placeholder files that are not needed for t
 **Writing Guidelines:** Always use imperative/infinitive form.
 
 ##### Frontmatter
+
+**The opening `---` must be the first line of the file.** Do not put anything before it (no env vars like `FOO=bar`, no comments, no BOM). Loaders expect `content.startsWith("---")`; if the first line is something else, the frontmatter is not parsed and the skill is skipped (missing description → skill not loaded).
 
 Write the YAML frontmatter with `name` and `description`:
 

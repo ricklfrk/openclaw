@@ -23,6 +23,7 @@ import { stripHeartbeatToken } from "../heartbeat.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import { runPreflightCompactionIfNeeded } from "./agent-runner-memory.js";
 import {
+  resolveFallbackRetryPrompt,
   resolveQueuedReplyExecutionConfig,
   resolveQueuedReplyRuntimeConfig,
   resolveModelFallbackOptions,
@@ -240,6 +241,7 @@ export function createFollowupRunner(params: {
       let runResult: Awaited<ReturnType<typeof runEmbeddedPiAgent>>;
       let fallbackProvider = run.provider;
       let fallbackModel = run.model;
+      let fallbackAttemptIndex = 0;
       let activeSessionEntry =
         (sessionKey ? sessionStore?.[sessionKey] : undefined) ?? sessionEntry;
       activeSessionEntry = await runPreflightCompactionIfNeeded({
@@ -268,6 +270,8 @@ export function createFollowupRunner(params: {
           classifyResult: ({ result, provider, model }) =>
             outcomePlan.classifyRunResult({ result, provider, model }),
           run: async (provider, model, runOptions) => {
+            const isFallbackRetry = fallbackAttemptIndex > 0;
+            fallbackAttemptIndex += 1;
             const authProfile = resolveRunAuthProfile(run, provider, { config: runtimeConfig });
             let attemptCompactionCount = 0;
             try {
@@ -301,10 +305,19 @@ export function createFollowupRunner(params: {
                 workspaceDir: run.workspaceDir,
                 config: runtimeConfig,
                 skillsSnapshot: run.skillsSnapshot,
-                prompt: queued.prompt,
+                prompt: resolveFallbackRetryPrompt({
+                  body: queued.prompt,
+                  isFallbackRetry,
+                }),
                 transcriptPrompt: queued.transcriptPrompt,
                 currentTurnContext: queued.currentTurnContext,
                 extraSystemPrompt: run.extraSystemPrompt,
+                inputProvenance: isFallbackRetry
+                  ? {
+                      kind: "internal_system",
+                      sourceTool: "model_fallback",
+                    }
+                  : undefined,
                 silentReplyPromptMode: run.silentReplyPromptMode,
                 sourceReplyDeliveryMode: run.sourceReplyDeliveryMode,
                 forceMessageTool: run.sourceReplyDeliveryMode === "message_tool_only",
@@ -400,6 +413,9 @@ export function createFollowupRunner(params: {
 
       const payloadArray = runResult.payloads ?? [];
       if (payloadArray.length === 0) {
+        defaultRuntime.log?.(
+          `[followup-trace] payloads empty — didSend=${runResult.didSendViaMessagingTool} sentTargets=${JSON.stringify(runResult.messagingToolSentTargets ?? [])} sentTexts=${(runResult.messagingToolSentTexts ?? []).length}`,
+        );
         return;
       }
       const sanitizedPayloads = payloadArray.flatMap((payload) => {
@@ -428,6 +444,9 @@ export function createFollowupRunner(params: {
       });
 
       if (finalPayloads.length === 0) {
+        defaultRuntime.log?.(
+          `[followup-trace] finalPayloads empty — sanitized=${sanitizedPayloads.length}`,
+        );
         return;
       }
 
@@ -474,6 +493,9 @@ export function createFollowupRunner(params: {
         return;
       }
 
+      defaultRuntime.log?.(
+        `[followup-trace] sending ${finalPayloads.length} payloads to ${queued.originatingChannel}:${queued.originatingTo} text=${finalPayloads[0]?.text?.slice(0, 60)}`,
+      );
       await sendFollowupPayloads(finalPayloads, effectiveQueued, {
         provider: providerUsed,
         modelId: modelUsed,

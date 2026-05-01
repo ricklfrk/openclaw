@@ -1,6 +1,5 @@
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_CONTEXT_TOKENS } from "../agents/defaults.js";
 import { applyModelDefaults } from "./defaults.js";
 import type { OpenClawConfig } from "./types.js";
 
@@ -136,7 +135,7 @@ describe("applyModelDefaults", () => {
     expect(model?.reasoning).toBe(false);
     expect(model?.input).toEqual(["text"]);
     expect(model?.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
-    expect(model?.contextWindow).toBe(DEFAULT_CONTEXT_TOKENS);
+    expect(model?.contextWindow).toBe(200_000);
     expect(model?.maxTokens).toBe(8192);
   });
 

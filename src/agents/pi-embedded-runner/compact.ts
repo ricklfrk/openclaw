@@ -82,6 +82,7 @@ import { createPreparedEmbeddedPiSettingsManager } from "../pi-project-settings.
 import {
   applyPiAutoCompactionGuard,
   applyPiCompactionSettingsFromConfig,
+  applyPiRetrySettingsFromConfig,
   isSilentOverflowProneModel,
 } from "../pi-settings.js";
 import { createOpenClawCodingTools } from "../pi-tools.js";
@@ -636,6 +637,7 @@ async function compactEmbeddedPiSessionDirectOnce(
       modelContextTokens: readPiModelContextTokens(runtimeModel),
       modelContextWindow: runtimeModelWithContext.contextWindow,
       defaultTokens: DEFAULT_CONTEXT_TOKENS,
+      agentId: effectiveSkillAgentId,
     });
     const effectiveModel = applyAuthHeaderOverride(
       applyLocalNoAuthHeaderOverride(
@@ -969,6 +971,7 @@ async function compactEmbeddedPiSessionDirectOnce(
           workspaceDir: effectiveWorkspace,
         }),
         contextTokenBudget: ctxInfo.tokens,
+        agentId: sessionAgentId,
       });
       // Sets compaction/pruning runtime state and returns extension factories
       // that must be passed to the resource loader for the safeguard to be active.
@@ -1059,6 +1062,28 @@ async function compactEmbeddedPiSessionDirectOnce(
             resourceLoader,
           });
           session = createdSession.session;
+          // Route Agent.getApiKey through the shared AuthStorage (populated by
+          // auth-controller.applyApiKeyInfo with the runtime override). Without
+          // this, pi-agent-core passes options.apiKey=undefined to wrappers like
+          // wrapGoogleNonStreaming that bypass pi-coding-agent's inner streamFn.
+          session.agent.getApiKey = (provider: string) => authStorage.getApiKey(provider);
+          // Pi SDK's DefaultResourceLoader.reload() (called both explicitly above
+          // when we have extension factories, and implicitly inside
+          // createAgentSession when we don't) rehydrates SettingsManager from
+          // global/project settings files. That wipes out the compaction/retry
+          // overrides applied earlier by createPreparedEmbeddedPiSettingsManager,
+          // so re-apply on the same settingsManager instance after session creation.
+          applyPiCompactionSettingsFromConfig({
+            settingsManager,
+            cfg: params.config,
+            contextTokenBudget: ctxInfo.tokens,
+            agentId: sessionAgentId,
+          });
+          applyPiRetrySettingsFromConfig({
+            settingsManager,
+            cfg: params.config,
+            agentId: sessionAgentId,
+          });
           applySystemPromptOverrideToSession(session, buildSystemPromptOverride(thinkLevel)());
           session.setActiveToolsByName(sessionToolAllowlist);
           // Compaction builds the same embedded system prompt, so it must flow

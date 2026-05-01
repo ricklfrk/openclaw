@@ -7,6 +7,7 @@ import { buildAgentHookContextChannelFields } from "../plugins/hook-agent-contex
 import { resolveBlockMessage } from "../plugins/hook-decision-types.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { loadCliSessionHistoryMessages } from "./cli-runner/session-history.js";
+import { persistCliTurn } from "./cli-runner/session-persist.js";
 import type { PreparedCliRunContext, RunCliAgentParams } from "./cli-runner/types.js";
 import { FailoverError, isFailoverError, resolveFailoverStatus } from "./failover-error.js";
 import { buildAgentHookContext } from "./harness/hook-context.js";
@@ -71,6 +72,15 @@ function buildCliHookAssistantMessage(params: {
     timestamp: Date.now(),
   };
 }
+
+// Map CLI backend ids to the pi-ai `Api` identifier that matches how the
+// backend would be reported if it went through the embedded transport.
+// Keeps session JSONL records comparable across CLI vs embedded paths.
+const CLI_BACKEND_API_MAP: Record<string, string> = {
+  "claude-cli": "anthropic-messages",
+  "google-gemini-cli": "google-gemini-cli",
+  "codex-cli": "openai-codex-responses",
+};
 
 export async function runCliAgent(params: RunCliAgentParams): Promise<EmbeddedPiRunResult> {
   // Cron gate must fire before prepareCliRunContext — that call allocates
@@ -395,7 +405,22 @@ export async function runPreparedCliAgent(
     };
   };
 
-  // Try with the provided CLI session ID first
+  const persistTurn = async (output: Awaited<ReturnType<typeof executePreparedCliRun>>) => {
+    await persistCliTurn({
+      sessionFile: params.sessionFile,
+      agentId: params.agentId,
+      sessionKey: params.sessionKey,
+      prompt: params.prompt,
+      images: params.images,
+      assistantText: output.text,
+      provider: params.provider,
+      model: context.modelId,
+      api: CLI_BACKEND_API_MAP[context.backendResolved.id] ?? context.backendResolved.id,
+      startedAt: context.started,
+      usage: output.usage,
+    });
+  };
+
   try {
     if (hasBeforeAgentRunHooks && hookRunner) {
       let beforeRunResult:
@@ -461,6 +486,7 @@ export async function runPreparedCliAgent(
         context.reusableCliSession.sessionId,
       );
       const effectiveCliSessionId = output.sessionId ?? context.reusableCliSession.sessionId;
+      await persistTurn(output);
       runAgentHarnessAgentEndHook({
         event: {
           messages: buildAgentEndMessages(lastAssistant),
@@ -484,6 +510,7 @@ export async function runPreparedCliAgent(
           try {
             const { output, lastAssistant } = await executeCliAttempt(undefined);
             const effectiveCliSessionId = output.sessionId;
+            await persistTurn(output);
             runAgentHarnessAgentEndHook({
               event: {
                 messages: buildAgentEndMessages(lastAssistant),

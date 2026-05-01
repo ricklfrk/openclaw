@@ -196,6 +196,7 @@ export async function executePluginCommand(params: {
   diagnosticsUploadApproved?: PluginCommandContext["diagnosticsUploadApproved"];
   diagnosticsPreviewOnly?: PluginCommandContext["diagnosticsPreviewOnly"];
   diagnosticsPrivateRouted?: PluginCommandContext["diagnosticsPrivateRouted"];
+  agentId?: string;
 }): Promise<PluginCommandResult> {
   const { command, args, senderId, channel, isAuthorizedSender, commandBody, config } = params;
 
@@ -310,6 +311,7 @@ export async function executePluginCommand(params: {
     ...(diagnosticsPrivateRoutedForCommand === undefined
       ? {}
       : { diagnosticsPrivateRouted: diagnosticsPrivateRoutedForCommand }),
+    agentId: params.agentId,
     requestConversationBinding: async (bindingParams) => {
       if (!command.pluginRoot || !bindingConversation) {
         return {

@@ -6,7 +6,10 @@ import {
   loadEnabledBundlePiSettingsSnapshot,
   resolveEmbeddedPiProjectSettingsPolicy,
 } from "./pi-project-settings-snapshot.js";
-import { applyPiCompactionSettingsFromConfig } from "./pi-settings.js";
+import {
+  applyPiCompactionSettingsFromConfig,
+  applyPiRetrySettingsFromConfig,
+} from "./pi-settings.js";
 
 function createEmbeddedPiSettingsManager(params: {
   cwd: string;
@@ -52,6 +55,7 @@ export function createPreparedEmbeddedPiSettingsManager(params: {
   pluginMetadataSnapshot?: PluginMetadataSnapshot;
   /** Resolved context window budget so reserve-token floor can be capped for small models. */
   contextTokenBudget?: number;
+  agentId?: string;
 }): SettingsManager {
   const settingsManager = createRuntimeEmbeddedPiSettingsManager(
     createEmbeddedPiSettingsManager(params),
@@ -60,6 +64,12 @@ export function createPreparedEmbeddedPiSettingsManager(params: {
     settingsManager,
     cfg: params.cfg,
     contextTokenBudget: params.contextTokenBudget,
+    agentId: params.agentId,
+  });
+  applyPiRetrySettingsFromConfig({
+    settingsManager,
+    cfg: params.cfg,
+    agentId: params.agentId,
   });
   return settingsManager;
 }

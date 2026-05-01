@@ -5,7 +5,7 @@ import type { DaemonInstallOptions, DaemonLifecycleOptions, GatewayRpcOpts } fro
 
 const daemonInstallModuleLoader = createLazyImportLoader(() => import("./install.runtime.js"));
 const daemonLifecycleModuleLoader = createLazyImportLoader(() => import("./lifecycle.runtime.js"));
-const daemonStatusModuleLoader = createLazyImportLoader(() => import("./status.runtime.js"));
+const daemonStatusModuleLoader = createLazyImportLoader(() => import("./daemon-status.runtime.js"));
 
 function loadDaemonInstallModule() {
   return daemonInstallModuleLoader.load();

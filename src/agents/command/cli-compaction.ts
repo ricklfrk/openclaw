@@ -13,6 +13,7 @@ import { resolveLiveToolResultMaxChars as resolveLiveToolResultMaxCharsImpl } fr
 import { createPreparedEmbeddedPiSettingsManager as createPreparedEmbeddedPiSettingsManagerImpl } from "../pi-project-settings.js";
 import {
   applyPiAutoCompactionGuard as applyPiAutoCompactionGuardImpl,
+  type PiRetryOverrides,
   resolveEffectiveCompactionMode,
 } from "../pi-settings.js";
 import type { SkillSnapshot } from "../skills.js";
@@ -23,10 +24,11 @@ type SettingsManagerLike = {
   getCompactionReserveTokens: () => number;
   getCompactionKeepRecentTokens: () => number;
   applyOverrides: (overrides: {
-    compaction: {
+    compaction?: {
       reserveTokens?: number;
       keepRecentTokens?: number;
     };
+    retry?: PiRetryOverrides;
   }) => void;
   setCompactionEnabled?: (enabled: boolean) => void;
 };

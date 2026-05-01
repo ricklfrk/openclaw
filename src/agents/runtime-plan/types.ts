@@ -205,6 +205,7 @@ export type AgentRuntimeTranscriptPolicy = {
   sanitizeThinkingSignatures: boolean;
   dropThinkingBlocks: boolean;
   dropReasoningFromHistory?: boolean;
+  dropThinkingBlocksMode: "all" | "historical" | "off";
   applyGoogleTurnOrdering: boolean;
   validateGeminiTurns: boolean;
   validateAnthropicTurns: boolean;

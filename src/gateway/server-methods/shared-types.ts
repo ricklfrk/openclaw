@@ -29,6 +29,8 @@ export type GatewayClient = {
     allowModelOverride?: boolean;
     pluginRuntimeOwnerId?: string;
   };
+  /** Default agent id from WebSocket URL query (?agent=...), used when request omits agentId. */
+  defaultAgentIdFromUrl?: string;
 };
 
 export type RespondFn = (

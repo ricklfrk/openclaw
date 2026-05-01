@@ -9,6 +9,10 @@ export type PluginHookBeforeModelResolveEvent = {
   prompt: string;
   /** Attachment metadata for file-aware model routing. */
   attachments?: PluginHookBeforeModelResolveAttachment[];
+  /** Current provider for this run (session/default) before any hook override. Plugins may use this to remember and restore later. */
+  provider?: string;
+  /** Current model id for this run (session/default) before any hook override. */
+  modelId?: string;
 };
 
 export type PluginHookBeforeModelResolveResult = {
@@ -23,6 +27,8 @@ export type PluginHookBeforePromptBuildEvent = {
   prompt: string;
   /** Session messages prepared for this run. */
   messages: unknown[];
+  /** Current system prompt text (read-only). Plugins can return a modified version via result.systemPrompt. */
+  systemPrompt?: string;
 };
 
 export type PluginHookBeforePromptBuildResult = {
@@ -68,6 +74,8 @@ export type PluginHookBeforeAgentStartEvent = {
   runId?: string;
   /** Optional because legacy hook can run in pre-session phase. */
   messages?: unknown[];
+  /** Current system prompt text (read-only). Plugins can return a modified version via result.systemPrompt. */
+  systemPrompt?: string;
 };
 
 /** @deprecated Use before_model_resolve and before_prompt_build result types. */

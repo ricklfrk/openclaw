@@ -362,18 +362,22 @@ export function buildEmbeddedRunPayloads(params: {
         normalizedAssistantTexts.length > 0 &&
         normalizedAssistantTexts === normalizedRawAnswerText));
   const hasAssistantTextPayload = nonEmptyAssistantTexts.length > 0;
-  const answerTexts = suppressAssistantArtifacts
-    ? []
-    : (shouldPreferRawAnswerText && fallbackRawAnswerText
-        ? [fallbackRawAnswerText]
-        : hasAssistantTextPayload
-          ? nonEmptyAssistantTexts
-          : fallbackAnswerText
-            ? [fallbackAnswerText]
-            : []
-      ).filter((text) => !shouldSuppressRawErrorText(text));
+  // When the agent already delivered its reply via a messaging tool, suppress
+  // accumulated assistant texts; the real reply was sent explicitly.
+  const suppressForMessagingTool = params.didSendViaMessagingTool === true;
+  const answerTexts =
+    suppressAssistantArtifacts || suppressForMessagingTool
+      ? []
+      : (shouldPreferRawAnswerText && fallbackRawAnswerText
+          ? [fallbackRawAnswerText]
+          : hasAssistantTextPayload
+            ? nonEmptyAssistantTexts
+            : fallbackAnswerText
+              ? [fallbackAnswerText]
+              : []
+        ).filter((text) => !shouldSuppressRawErrorText(text));
 
-  let hasUserFacingAssistantReply = false;
+  let hasUserFacingAssistantReply = suppressForMessagingTool;
   const hasUserFacingErrorReply = replyItems.some((item) => item.isError === true);
   let hasUserFacingFailureAcknowledgement = false;
   for (const text of answerTexts) {

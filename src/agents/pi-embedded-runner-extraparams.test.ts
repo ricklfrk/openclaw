@@ -91,7 +91,7 @@ const ANTHROPIC_DEFAULT_BETAS = [
   "interleaved-thinking-2025-05-14",
 ];
 const ANTHROPIC_CONTEXT_1M_BETA = "context-1m-2025-08-07";
-const ANTHROPIC_OAUTH_BETAS = ["oauth-2025-04-20", "claude-code-20250219"];
+const ANTHROPIC_OAUTH_BETAS = ["claude-code-20250219", "oauth-2025-04-20"];
 
 const XAI_FAST_MODEL_IDS = new Map<string, string>([
   ["grok-3", "grok-3-fast"],
@@ -227,14 +227,21 @@ function isDirectAnthropicModel(model: { provider?: string; baseUrl?: string }):
 function createAnthropicBetaHeadersWrapper(baseStreamFn: StreamFn | undefined, betas: string[]) {
   const underlying = baseStreamFn ?? (() => ({}) as ReturnType<StreamFn>);
   return ((model, context, options) => {
-    const nextBetas = isAnthropicOauthApiKey(options?.apiKey)
-      ? [...ANTHROPIC_OAUTH_BETAS, ...betas.filter((beta) => beta !== ANTHROPIC_CONTEXT_1M_BETA)]
-      : betas;
+    // Mirror the fork's extension wrapper: always inject OAuth-required betas
+    // and keep context-1m regardless of auth mode so the billing proxy sees a
+    // consistent CLI-shaped fingerprint.
+    const allBetas = [...new Set([...ANTHROPIC_OAUTH_BETAS, ...ANTHROPIC_DEFAULT_BETAS, ...betas])];
     const existingBeta =
       typeof options?.headers?.["anthropic-beta"] === "string"
         ? options.headers["anthropic-beta"]
         : "";
-    const betaHeader = [...(existingBeta ? [existingBeta] : []), ...nextBetas].join(",");
+    const existingList = existingBeta
+      ? existingBeta
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean)
+      : [];
+    const betaHeader = [...new Set([...existingList, ...allBetas])].join(",");
     return underlying(model, context, {
       ...options,
       headers: {
@@ -2595,9 +2602,8 @@ describe("applyExtraParamsToAgent", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.headers).toEqual({
       "X-Custom": "1",
-      // Includes pi-ai default betas (preserved to avoid overwrite) + context1m
       "anthropic-beta":
-        "fine-grained-tool-streaming-2025-05-14,interleaved-thinking-2025-05-14,context-1m-2025-08-07",
+        "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14,interleaved-thinking-2025-05-14,context-1m-2025-08-07",
     });
   });
 
@@ -2614,7 +2620,7 @@ describe("applyExtraParamsToAgent", () => {
     expect(headers).toEqual({ "X-Custom": "1" });
   });
 
-  it("skips context1m beta for OAuth tokens but preserves OAuth-required betas", () => {
+  it("includes context1m beta for OAuth tokens alongside OAuth-required betas", () => {
     const calls: Array<SimpleStreamOptions | undefined> = [];
     const baseStreamFn: StreamFn = (_model, _context, options) => {
       calls.push(options);
@@ -2644,7 +2650,6 @@ describe("applyExtraParamsToAgent", () => {
     } as Model<"anthropic-messages">;
     const context: Context = { messages: [] };
 
-    // Simulate pi-agent-core passing an OAuth token (sk-ant-oat-*) as apiKey
     void agent.streamFn?.(model, context, {
       apiKey: "sk-ant-oat01-test-oauth-token", // pragma: allowlist secret
       headers: { "X-Custom": "1" },
@@ -2652,10 +2657,9 @@ describe("applyExtraParamsToAgent", () => {
 
     expect(calls).toHaveLength(1);
     const betaHeader = calls[0]?.headers?.["anthropic-beta"] as string;
-    // Must include the OAuth-required betas so they aren't stripped by pi-ai's mergeHeaders
     expect(betaHeader).toContain("oauth-2025-04-20");
     expect(betaHeader).toContain("claude-code-20250219");
-    expect(betaHeader).not.toContain("context-1m-2025-08-07");
+    expect(betaHeader).toContain("context-1m-2025-08-07");
   });
 
   it("merges existing anthropic-beta headers with configured betas", () => {
@@ -2674,7 +2678,7 @@ describe("applyExtraParamsToAgent", () => {
 
     expect(headers).toEqual({
       "anthropic-beta":
-        "prompt-caching-2024-07-31,fine-grained-tool-streaming-2025-05-14,interleaved-thinking-2025-05-14,files-api-2025-04-14,context-1m-2025-08-07",
+        "prompt-caching-2024-07-31,claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14,interleaved-thinking-2025-05-14,files-api-2025-04-14,context-1m-2025-08-07",
     });
   });
 

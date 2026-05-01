@@ -5,7 +5,7 @@ import {
   normalizeOptionalThreadValue,
 } from "../shared/string-coerce.js";
 
-export type ChannelRouteChatType = "direct" | "group" | "channel";
+export type ChannelRouteChatType = "direct" | "group" | "channel" | "webhook";
 
 export type ChannelRouteThreadKind = "topic" | "thread" | "reply";
 

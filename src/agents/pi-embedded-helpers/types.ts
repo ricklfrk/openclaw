@@ -3,6 +3,7 @@ export type EmbeddedContextFile = { path: string; content: string };
 export type FailoverReason =
   | "auth"
   | "auth_permanent"
+  | "empty_response"
   | "format"
   | "rate_limit"
   | "overloaded"

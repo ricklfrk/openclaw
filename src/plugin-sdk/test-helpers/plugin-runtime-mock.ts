@@ -1,4 +1,5 @@
 import { vi } from "vitest";
+import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../../../src/agents/defaults.js";
 import {
   implicitMentionKindWhen,
   resolveInboundMentionDecision,
@@ -10,9 +11,6 @@ import {
   shouldAckReaction,
 } from "../testing.js";
 import type { PluginRuntime } from "../testing.js";
-
-const DEFAULT_PROVIDER = "openai";
-const DEFAULT_MODEL = "gpt-5.5";
 
 type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends (...args: never[]) => unknown

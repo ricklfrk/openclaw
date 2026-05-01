@@ -342,6 +342,7 @@ function peerLookupKeys(kind: ChatType, id: string): string[] {
   if (kind === "channel") {
     return [`channel:${id}`, `group:${id}`];
   }
+  // webhook, direct, etc.: single key
   return [`${kind}:${id}`];
 }
 

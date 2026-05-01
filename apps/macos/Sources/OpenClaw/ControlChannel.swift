@@ -25,6 +25,8 @@ struct ControlAgentEvent: Codable, Identifiable {
     let ts: Double
     let data: [String: OpenClawProtocol.AnyCodable]
     let summary: String?
+    /// Top-level session key from gateway (used so main-session tools match WorkActivityStore.mainSessionKey).
+    let sessionKey: String?
 }
 
 enum ControlChannelError: Error, LocalizedError {
@@ -373,9 +375,9 @@ final class ControlChannel {
     }
 
     private func routeWorkActivity(from event: ControlAgentEvent) {
-        // We currently treat VoiceWake as the "main" session for UI purposes.
-        // In the future, the gateway can include a sessionKey to distinguish runs.
-        let sessionKey = (event.data["sessionKey"]?.value as? String) ?? "main"
+        // Prefer top-level sessionKey from gateway so main session matches WorkActivityStore.mainSessionKey.
+        let raw = event.sessionKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let sessionKey = raw.isEmpty ? ((event.data["sessionKey"]?.value as? String) ?? "main") : raw
 
         switch event.stream.lowercased() {
         case "job":

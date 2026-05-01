@@ -55,6 +55,7 @@ export const handlePluginCommand: CommandHandler = async (
         ? params.ctx.MessageThreadId
         : undefined,
     threadParentId: normalizeOptionalString(params.ctx.ThreadParentId),
+    agentId: params.agentId,
   });
   const shouldContinue = result.continueAgent === true;
   const { continueAgent: _continueAgent, ...reply } = result;

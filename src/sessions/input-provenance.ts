@@ -134,3 +134,12 @@ export function annotateInterSessionPromptText(
   const body = removeFirstInterSessionPromptPrefix(text);
   return `${prefix}\n${body}`;
 }
+
+export function hasInternalSystemUserProvenance(
+  message: { role?: unknown; provenance?: unknown } | undefined,
+): boolean {
+  if (!message || message.role !== "user") {
+    return false;
+  }
+  return normalizeInputProvenance(message.provenance)?.kind === "internal_system";
+}
