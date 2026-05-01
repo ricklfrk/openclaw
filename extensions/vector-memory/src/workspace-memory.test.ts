@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type { Embedder } from "./embedder.js";
+import type { MemoryEntry, MemorySearchResult, MemoryStore } from "./store.js";
 import {
+  DEFAULT_WORKSPACE_SCOPE,
+  retrieveScope,
   stripIndexNoise,
   stripRecallBoilerplate,
   stripRecallNoiseForPrompt,
@@ -9,6 +13,63 @@ const IMAGE_RESEND_BOILERPLATE =
   "To send an image back, prefer the message tool (media/path/filePath). If you must inline, use MEDIA:https://example.com/image. fer the message tool (media/path/filePath). If you must inline, use MEDIA:https://example.com/image.jpg (spaces ok, quote if needed) or a safe relative path like MEDIA:./image.jpg. Avoid absolute paths (MEDIA:/...) and ~ paths — they are blocked for security. Keep caption in the text body.";
 const HEARTBEAT_FOLLOW_UP_PROMPT =
   "Check if there's anything you should follow up on with the user. Say it, then DO it — words without action = nothing happened. If nothing to follow up, reply HEARTBEAT_OK.";
+
+function makeScopeEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
+  return {
+    id: "scope-entry",
+    text: "DJI Pocket 4 相機討論",
+    vector: [1, 0, 0],
+    category: "other",
+    importance: 1,
+    timestamp: Date.now(),
+    metadata: JSON.stringify({
+      source_file: "memory/2026-04-30.md",
+      chunk_index: 0,
+      chunk_total: 1,
+      line_start: 57,
+      line_end: 65,
+    }),
+    ...overrides,
+  };
+}
+
+describe("retrieveScope", () => {
+  it("uses BM25-only candidates when the shared query embedding is unavailable", async () => {
+    const entry = makeScopeEntry();
+    const bm25Rows: MemorySearchResult[] = [{ entry, score: 0.85 }];
+    const store = {
+      vectorSearch: async () => {
+        throw new Error("vector search should not run without a query vector");
+      },
+      bm25Search: async () => bm25Rows,
+      findByMetadataKV: async () => [],
+    } as unknown as MemoryStore;
+    const embedder = {
+      embedQuery: async () => {
+        throw new Error("embedder should not be called");
+      },
+      dimensions: 3,
+    } as unknown as Embedder;
+
+    const results = await retrieveScope({
+      query: "POCKET4 哪裡有賣",
+      bm25Query: "POCKET4 pocket 4",
+      embeddingUnavailable: true,
+      recall: {
+        ...DEFAULT_WORKSPACE_SCOPE.recall,
+        contextWindowChunks: 0,
+        rerankWeight: 0,
+      },
+      store,
+      embedder,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].entry.id).toBe(entry.id);
+    expect(results[0].rawVectorScore).toBe(0);
+    expect(results[0].rawBm25Score).toBe(0.85);
+  });
+});
 
 describe("stripRecallBoilerplate", () => {
   it("removes duplicated image resend instructions before rerank", () => {

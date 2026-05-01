@@ -266,6 +266,86 @@ describe("MemoryRetriever — time decay gates admission before hardMinScore", (
   });
 });
 
+describe("MemoryRetriever — shared query vectors and BM25 fallback", () => {
+  function makeHybridStore(opts: {
+    vectorRows?: MemorySearchResult[];
+    bm25Rows?: MemorySearchResult[];
+    onVectorSearch?: (vec: number[]) => void;
+  }): MemoryStore {
+    return {
+      hasFtsSupport: true,
+      vectorSearch: async (vec: number[]) => {
+        opts.onVectorSearch?.(vec);
+        return opts.vectorRows ?? [];
+      },
+      bm25Search: async () => opts.bm25Rows ?? [],
+      hasId: async () => true,
+    } as unknown as MemoryStore;
+  }
+
+  function makeThrowingEmbedder(): Embedder {
+    return {
+      embedQuery: async () => {
+        throw new Error("embedder should not be called");
+      },
+      dimensions: 3,
+    } as unknown as Embedder;
+  }
+
+  function buildHybridRetriever(store: MemoryStore): MemoryRetriever {
+    return new MemoryRetriever(store, makeThrowingEmbedder(), {
+      ...DEFAULT_RETRIEVAL_CONFIG,
+      mode: "hybrid",
+      rerank: "none",
+      recencyWeight: 0,
+      lengthNormAnchor: 0,
+      filterNoise: false,
+      hardMinScore: 0.4,
+      timeDecayHalfLifeDays: 0,
+    });
+  }
+
+  it("uses a caller-provided query vector without embedding again", async () => {
+    const seenVectors: number[][] = [];
+    const store = makeHybridStore({
+      vectorRows: [{ entry: makeEntry({ id: "vector-hit" }), score: 0.9 }],
+      onVectorSearch: (vec) => seenVectors.push(vec),
+    });
+
+    const retriever = buildHybridRetriever(store);
+    const results = await retriever.retrieve({
+      query: "anything",
+      queryVector: [9, 8, 7],
+      limit: 5,
+    });
+
+    expect(seenVectors).toEqual([[9, 8, 7]]);
+    expect(results[0].entry.id).toBe("vector-hit");
+  });
+
+  it("continues with BM25-only retrieval when embedding is unavailable", async () => {
+    const store = makeHybridStore({
+      bm25Rows: [{ entry: makeEntry({ id: "bm25-hit", text: "DJI Pocket 4 相機" }), score: 0.85 }],
+      onVectorSearch: () => {
+        throw new Error("vector search should not be called");
+      },
+    });
+
+    const retriever = buildHybridRetriever(store);
+    const results = await retriever.retrieve({
+      query: "POCKET4 哪裡有賣",
+      bm25Query: "POCKET4 pocket 4",
+      embeddingUnavailable: true,
+      limit: 5,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].entry.id).toBe("bm25-hit");
+    expect(results[0].sources.vector).toBeUndefined();
+    expect(results[0].sources.bm25?.score).toBe(0.85);
+  });
+});
+
 describe("DEFAULT_RETRIEVAL_CONFIG", () => {
   it("uses hardMinScore=0.4 (bumped from 0.35 on 2026-04-26)", () => {
     expect(DEFAULT_RETRIEVAL_CONFIG.hardMinScore).toBe(0.4);

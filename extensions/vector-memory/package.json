@@ -8,7 +8,7 @@
     "@huggingface/transformers": "^4.2.0",
     "@lancedb/lancedb": "^0.26.0",
     "@sinclair/typebox": "0.34.49",
-    "openai": "^4.80.0",
+    "openai": "^6.34.0",
     "proper-lockfile": "^4.1.2"
   },
   "devDependencies": {

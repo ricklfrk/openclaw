@@ -39,6 +39,16 @@ export interface RetrievalContext {
   category?: string;
   entityTags?: string[];
   /**
+   * Optional precomputed query vector. Auto-recall shares one embedding across
+   * extracted/workspace/daily scopes to avoid three identical provider calls.
+   */
+  queryVector?: number[];
+  /**
+   * True when the caller already attempted query embedding and it failed. In
+   * hybrid mode we should still run BM25 instead of failing the whole scope.
+   */
+  embeddingUnavailable?: boolean;
+  /**
    * Optional BM25-side query. When set, the LanceDB FTS / BM25 path uses
    * this instead of `query`, while vector embedding still uses `query`.
    *
@@ -406,7 +416,8 @@ export class MemoryRetriever {
   ) {}
 
   async retrieve(context: RetrievalContext): Promise<RetrievalResult[]> {
-    const { query, limit, category, entityTags, bm25Query } = context;
+    const { query, limit, category, entityTags, bm25Query, queryVector, embeddingUnavailable } =
+      context;
     const safeLimit = Math.min(Math.max(limit, 1), 20);
 
     const tStart = performance.now();
@@ -421,10 +432,14 @@ export class MemoryRetriever {
 
     let results: RetrievalResult[];
 
-    if (this.config.mode === "vector" || !this.store.hasFtsSupport) {
-      results = await this.vectorOnlyRetrieval(query, safeLimit, category);
+    if (embeddingUnavailable === true) {
+      results = this.store.hasFtsSupport
+        ? await this.hybridRetrieval(query, safeLimit, category, bm25Query, undefined, true)
+        : [];
+    } else if (this.config.mode === "vector" || !this.store.hasFtsSupport) {
+      results = await this.vectorOnlyRetrieval(query, safeLimit, category, queryVector);
     } else {
-      results = await this.hybridRetrieval(query, safeLimit, category, bm25Query);
+      results = await this.hybridRetrieval(query, safeLimit, category, bm25Query, queryVector);
     }
 
     if (entityTags && entityTags.length > 0) {
@@ -443,9 +458,10 @@ export class MemoryRetriever {
     query: string,
     limit: number,
     category?: string,
+    queryVector?: number[],
   ): Promise<RetrievalResult[]> {
-    const queryVector = await this.embedder.embedQuery(query);
-    const results = await this.store.vectorSearch(queryVector, limit, this.config.minScore);
+    const resolvedQueryVector = queryVector ?? (await this.embedder.embedQuery(query));
+    const results = await this.store.vectorSearch(resolvedQueryVector, limit, this.config.minScore);
     const filtered = category ? results.filter((r) => r.entry.category === category) : results;
 
     let mapped = filtered.map(
@@ -486,17 +502,31 @@ export class MemoryRetriever {
     limit: number,
     category?: string,
     bm25Query?: string,
+    queryVector?: number[],
+    embeddingUnavailable = false,
   ): Promise<RetrievalResult[]> {
     const candidatePoolSize = Math.max(this.config.candidatePoolSize, limit * 2);
 
-    const tEmbed = performance.now();
-    const queryVector = await this.embedder.embedQuery(query);
-    this.lastTimings.embed = Math.round(performance.now() - tEmbed);
+    let resolvedQueryVector = queryVector;
+    if (!resolvedQueryVector && !embeddingUnavailable) {
+      const tEmbed = performance.now();
+      try {
+        resolvedQueryVector = await this.embedder.embedQuery(query);
+      } catch {
+        // Keep the recall path useful when the embedding provider is slow or
+        // unavailable. BM25 can still recover exact terms like POCKET4.
+        resolvedQueryVector = undefined;
+      } finally {
+        this.lastTimings.embed = Math.round(performance.now() - tEmbed);
+      }
+    }
 
     const tSearch = performance.now();
     const effectiveBm25Query = bm25Query && bm25Query.length > 0 ? bm25Query : query;
     const [vectorResults, bm25Results] = await Promise.all([
-      this.runVectorSearch(queryVector, candidatePoolSize, category),
+      resolvedQueryVector
+        ? this.runVectorSearch(resolvedQueryVector, candidatePoolSize, category)
+        : Promise.resolve([] as Array<MemorySearchResult & { rank: number }>),
       this.runBM25Search(effectiveBm25Query, candidatePoolSize, category),
     ]);
     this.lastTimings.vectorAndBm25 = Math.round(performance.now() - tSearch);
@@ -523,9 +553,7 @@ export class MemoryRetriever {
     const rerankInput = fusedResults.slice(0, this.config.candidatePoolSize);
     const tRerank = performance.now();
     let reranked =
-      this.config.rerank !== "none"
-        ? await this.rerankResults(query, queryVector, rerankInput)
-        : fusedResults;
+      this.config.rerank !== "none" ? await this.rerankResults(query, rerankInput) : fusedResults;
     if (this.config.rerank !== "none") {
       this.lastTimings.rerank = Math.round(performance.now() - tRerank);
       this.lastTimings.rerankDocs = rerankInput.length;
@@ -632,7 +660,6 @@ export class MemoryRetriever {
 
   private async rerankResults(
     query: string,
-    queryVector: number[],
     results: RetrievalResult[],
   ): Promise<RetrievalResult[]> {
     if (results.length === 0) {

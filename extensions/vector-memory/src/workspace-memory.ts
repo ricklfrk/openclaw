@@ -791,6 +791,15 @@ export interface ScopedRetrieveOptions {
   recall: ScopeRecallConfig;
   store: MemoryStore;
   embedder: Embedder;
+  /**
+   * Optional precomputed query vector shared by auto-recall scopes.
+   */
+  queryVector?: number[];
+  /**
+   * True when the caller already tried embedding and it failed. Retrieval
+   * should continue with BM25-only candidates instead of returning nothing.
+   */
+  embeddingUnavailable?: boolean;
   nowMs?: number;
   log?: (msg: string) => void;
   /**
@@ -829,20 +838,23 @@ export async function retrieveScope(opts: ScopedRetrieveOptions): Promise<Scoped
 
   const candidatePool = Math.max(recall.maxItems, recall.candidatePool);
 
-  let queryVec: number[];
-  try {
-    queryVec = await embedder.embedQuery(query);
-  } catch (err) {
-    log(`vector-memory/workspace: embed query failed: ${String(err)}`);
-    return [];
+  let queryVec = opts.queryVector;
+  if (!queryVec && opts.embeddingUnavailable !== true) {
+    try {
+      queryVec = await embedder.embedQuery(query);
+    } catch (err) {
+      log(`vector-memory/workspace: embed query failed; using BM25-only fallback: ${String(err)}`);
+    }
   }
 
   const bm25Query = opts.bm25Query && opts.bm25Query.length > 0 ? opts.bm25Query : query;
   const [vectorHits, bm25Hits] = await Promise.all([
-    store.vectorSearch(queryVec, candidatePool, recall.minScore).catch((err) => {
-      log(`vector-memory/workspace: vectorSearch failed: ${String(err)}`);
-      return [] as MemorySearchResult[];
-    }),
+    queryVec
+      ? store.vectorSearch(queryVec, candidatePool, recall.minScore).catch((err) => {
+          log(`vector-memory/workspace: vectorSearch failed: ${String(err)}`);
+          return [] as MemorySearchResult[];
+        })
+      : Promise.resolve([] as MemorySearchResult[]),
     store.bm25Search(bm25Query, candidatePool).catch((err) => {
       log(`vector-memory/workspace: bm25Search failed: ${String(err)}`);
       return [] as MemorySearchResult[];
@@ -854,7 +866,16 @@ export async function retrieveScope(opts: ScopedRetrieveOptions): Promise<Scoped
   }
 
   // 1) Fuse rankings (70/30 vector/BM25 — matches main retriever default).
-  const merged = mergeRankings(vectorHits, bm25Hits, 0.7, 0.3);
+  // If vector produced no usable candidates, BM25 is the only active signal,
+  // so do not multiply its score by the usual hybrid weight or exact-match
+  // fallback hits get dropped by the minScore gate before they can help.
+  const bm25OnlyFallback = vectorHits.length === 0;
+  const merged = mergeRankings(
+    vectorHits,
+    bm25Hits,
+    bm25OnlyFallback ? 0 : 0.7,
+    bm25OnlyFallback ? 1 : 0.3,
+  );
 
   // 1a) Post-fusion entry gate (mirrors conversations retriever):
   //     - fused score >= minScore: drop items whose combined signal is weak.

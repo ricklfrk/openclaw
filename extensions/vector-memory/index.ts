@@ -1040,12 +1040,27 @@ export default definePluginEntry({
     const lastLLMCallAt = new Map<string, number>();
     const nonEmpty = (v: string | undefined | null): string | undefined =>
       typeof v === "string" && v.length > 0 ? v : undefined;
+    const DREAMING_NARRATIVE_SESSION_RE = /(?:^|:)dreaming-narrative-(?:light|rem|deep)-/;
     const sessionTrackKey = (ctx?: {
       sessionKey?: string;
       sessionId?: string;
       agentId?: string;
     }): string =>
       nonEmpty(ctx?.sessionKey) ?? nonEmpty(ctx?.sessionId) ?? nonEmpty(ctx?.agentId) ?? "default";
+    const isDreamingNarrativeContext = (ctx: unknown): boolean => {
+      if (!ctx || typeof ctx !== "object") {
+        return false;
+      }
+      const record = ctx as {
+        sessionKey?: string;
+        sessionId?: string;
+        contextKey?: string;
+        runId?: string;
+      };
+      return [record.sessionKey, record.sessionId, record.contextKey, record.runId]
+        .filter((value): value is string => typeof value === "string" && value.length > 0)
+        .some((value) => DREAMING_NARRATIVE_SESSION_RE.test(value));
+    };
     const touchLastLLMCallAt = (key: string, ts: number): void => {
       // LRU: delete+set so the newest key becomes last in insertion order.
       lastLLMCallAt.delete(key);
@@ -1435,6 +1450,10 @@ export default definePluginEntry({
     if (autoCapture) {
       api.on("agent_end", async (event, ctx) => {
         try {
+          if (isDreamingNarrativeContext(ctx)) {
+            return;
+          }
+
           if (!event.success) {
             return;
           }
@@ -1640,6 +1659,9 @@ export default definePluginEntry({
       // Independent of autoCapture so idle-based stripping works even when
       // capture is off.
       api.on("agent_end", (_event, ctx) => {
+        if (isDreamingNarrativeContext(ctx)) {
+          return;
+        }
         touchLastLLMCallAt(sessionTrackKey(ctx), Date.now());
       });
 
@@ -1649,6 +1671,11 @@ export default definePluginEntry({
           const tHookStart = performance.now();
           try {
             const agentId = ctx?.agentId ?? "main";
+
+            if (isDreamingNarrativeContext(ctx)) {
+              logDebug(`vector-memory: [${agentId}] skipping dreaming narrative context`);
+              return undefined;
+            }
 
             // Exclude specific agents (cron, background, etc.)
             if (autoRecallExcludeAgents.has(agentId)) {
@@ -1752,7 +1779,25 @@ export default definePluginEntry({
             // execution is captured accurately (end - start is wall-clock per
             // scope, not queue-time inside Promise.all).
             const tScopeStart = performance.now();
-            const timings = { extracted: 0, workspace: 0, daily: 0 };
+            const timings = { queryEmbed: 0, extracted: 0, workspace: 0, daily: 0 };
+
+            let queryVector: number[] | undefined;
+            let embeddingUnavailable = false;
+            const tQueryEmbed = performance.now();
+            try {
+              queryVector = await withTimeout(
+                embedder.embedQuery(query),
+                autoRecallTimeoutMs,
+                "vector-memory recall query embedding",
+              );
+            } catch (err) {
+              embeddingUnavailable = true;
+              api.logger.error(
+                `vector-memory: [${agentId}] query embedding failed; using BM25-only fallback: ${String(err)}`,
+              );
+            } finally {
+              timings.queryEmbed = Math.round(performance.now() - tQueryEmbed);
+            }
 
             const [extractedResults, workspaceResults, dailyResults] = await Promise.all([
               (async () => {
@@ -1762,6 +1807,8 @@ export default definePluginEntry({
                     extractedRetriever.retrieve({
                       query,
                       bm25Query,
+                      queryVector,
+                      embeddingUnavailable,
                       limit: extractedLimit,
                       entityTags: queryEntityTags.length > 0 ? queryEntityTags : undefined,
                     }),
@@ -1787,6 +1834,8 @@ export default definePluginEntry({
                     retrieveScope({
                       query,
                       bm25Query,
+                      queryVector,
+                      embeddingUnavailable,
                       recall: workspaceScope.recall,
                       store: storeManager.getWorkspaceStore(agentId),
                       embedder,
@@ -1815,6 +1864,8 @@ export default definePluginEntry({
                     retrieveScope({
                       query,
                       bm25Query,
+                      queryVector,
+                      embeddingUnavailable,
                       recall: dailyScope.recall,
                       store: storeManager.getDailyStore(agentId),
                       embedder,
@@ -1838,7 +1889,7 @@ export default definePluginEntry({
             const retrieveMs = Math.round(performance.now() - tScopeStart);
             const rt = extractedRetriever.lastTimings;
             api.logger.info(
-              `vector-memory: [${agentId}] recall timing: extracted=${timings.extracted}ms (embed=${rt.embed}ms vec+bm25=${rt.vectorAndBm25}ms rerank=${rt.rerank}ms[${rt.rerankMode},${rt.rerankDocs}docs]) workspace=${timings.workspace}ms daily=${timings.daily}ms parallel=${retrieveMs}ms`,
+              `vector-memory: [${agentId}] recall timing: queryEmbed=${timings.queryEmbed}ms${embeddingUnavailable ? "[bm25-fallback]" : ""} extracted=${timings.extracted}ms (embed=${rt.embed}ms vec+bm25=${rt.vectorAndBm25}ms rerank=${rt.rerank}ms[${rt.rerankMode},${rt.rerankDocs}docs]) workspace=${timings.workspace}ms daily=${timings.daily}ms total=${retrieveMs}ms`,
             );
 
             // ---- Build <from-vector-memory> block (extracted memories) ----
