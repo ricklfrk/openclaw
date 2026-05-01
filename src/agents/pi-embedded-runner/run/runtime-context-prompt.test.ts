@@ -85,7 +85,7 @@ describe("runtime context prompt submission", () => {
     expect(buildCurrentTurnPromptContextSuffix({ reply: { body: "   " } })).toBe("");
   });
 
-  it("queues runtime context as a hidden next-turn custom message", async () => {
+  it("queues runtime context as a visible next-turn custom message", async () => {
     const sentMessages: Array<{ content: string }> = [];
     const sendCustomMessage = vi.fn(async (message: { content: string }) => {
       sentMessages.push(message);
@@ -100,7 +100,7 @@ describe("runtime context prompt submission", () => {
       expect.objectContaining({
         customType: "openclaw.runtime-context",
         content: "secret runtime context",
-        display: false,
+        display: true,
       }),
       { deliverAs: "nextTurn" },
     );

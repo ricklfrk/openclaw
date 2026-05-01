@@ -1063,6 +1063,58 @@ describe("readSessionMessages", () => {
     }
   });
 
+  test("includes visible runtime memory context custom messages", () => {
+    const sessionId = "test-session-runtime-context";
+    const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
+    const memoryContext = [
+      "<relevant-memories>",
+      "  <from-vector-memory>",
+      "    - Pocket 4 purchase plan",
+      "  </from-vector-memory>",
+      "</relevant-memories>",
+    ].join("\n");
+    const lines = [
+      JSON.stringify({ type: "session", version: 1, id: sessionId }),
+      JSON.stringify({ message: { role: "user", content: "Hello" } }),
+      JSON.stringify({
+        type: "custom_message",
+        customType: "openclaw.runtime-context",
+        content: memoryContext,
+        display: true,
+        id: "ctx-1",
+        timestamp: "2026-02-07T00:00:00.000Z",
+      }),
+      JSON.stringify({
+        type: "custom_message",
+        customType: "openclaw.runtime-context",
+        content: "Conversation info only",
+        display: true,
+        id: "ctx-2",
+      }),
+      JSON.stringify({ message: { role: "assistant", content: "World" } }),
+    ];
+    fs.writeFileSync(transcriptPath, lines.join("\n"), "utf-8");
+
+    const out = readSessionMessages(sessionId, storePath);
+    expect(out).toHaveLength(3);
+    const marker = out[1] as {
+      role: string;
+      content?: Array<{ text?: string }>;
+      __openclaw?: { kind?: string; customType?: string; id?: string; seq?: number };
+      timestamp?: number;
+    };
+    expect(marker.role).toBe("system");
+    expect(marker.content?.[0]?.text).toContain("<from-vector-memory>");
+    expect(marker.__openclaw).toMatchObject({
+      kind: "runtime-context",
+      customType: "openclaw.runtime-context",
+      id: "ctx-1",
+      seq: 2,
+    });
+    expect(JSON.stringify(out)).not.toContain("Conversation info only");
+    expect(typeof marker.timestamp).toBe("number");
+  });
+
   test("reads only the active branch when transcript rewrites abandon older entries", () => {
     const sessionId = "test-session-active-branch";
     const sessionFile = path.join(tmpDir, `${sessionId}.jsonl`);

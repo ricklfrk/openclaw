@@ -143,7 +143,7 @@ export async function queueRuntimeContextForNextTurn(params: {
     {
       customType: OPENCLAW_RUNTIME_CONTEXT_CUSTOM_TYPE,
       content: runtimeContext,
-      display: false,
+      display: true,
       details: { source: "openclaw-runtime-context" },
     },
     { deliverAs: "nextTurn" },

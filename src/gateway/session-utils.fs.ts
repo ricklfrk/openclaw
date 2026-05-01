@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { StringDecoder } from "node:string_decoder";
+import { OPENCLAW_RUNTIME_CONTEXT_CUSTOM_TYPE } from "../agents/internal-runtime-context.js";
 import { isNonConformingRetryPrompt } from "../agents/pi-embedded-runner/run/non-conforming-retry.js";
 import { deriveSessionTotalTokens, hasNonzeroUsage, normalizeUsage } from "../agents/usage.js";
 import { jsonUtf8Bytes } from "../infra/json-utf8-bytes.js";
@@ -139,6 +140,41 @@ export function attachOpenClawTranscriptMeta(
     __openclaw: {
       ...existing,
       ...meta,
+    },
+  };
+}
+
+function parseTranscriptTimestamp(timestamp: unknown): number {
+  const parsed = typeof timestamp === "string" ? Date.parse(timestamp) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : Date.now();
+}
+
+function projectVisibleRuntimeContextEntry(
+  entry: unknown,
+  seq: number,
+): Record<string, unknown> | null {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return null;
+  }
+  const record = entry as Record<string, unknown>;
+  if (
+    record.type !== "custom_message" ||
+    record.customType !== OPENCLAW_RUNTIME_CONTEXT_CUSTOM_TYPE ||
+    record.display !== true ||
+    typeof record.content !== "string" ||
+    !record.content.includes("<relevant-memories>")
+  ) {
+    return null;
+  }
+  return {
+    role: "system",
+    content: [{ type: "text", text: record.content }],
+    timestamp: parseTranscriptTimestamp(record.timestamp),
+    __openclaw: {
+      kind: "runtime-context",
+      customType: OPENCLAW_RUNTIME_CONTEXT_CUSTOM_TYPE,
+      ...(typeof record.id === "string" ? { id: record.id } : {}),
+      seq,
     },
   };
 }
@@ -732,15 +768,18 @@ function parsedSessionEntryToMessage(parsed: unknown, seq: number): unknown {
     });
   }
 
+  const runtimeContextMessage = projectVisibleRuntimeContextEntry(entry, seq);
+  if (runtimeContextMessage) {
+    return runtimeContextMessage;
+  }
+
   // Compaction entries are not "message" records, but they're useful context for debugging.
   // Emit a lightweight synthetic message that the Web UI can render as a divider.
   if (entry.type === "compaction") {
-    const ts = typeof entry.timestamp === "string" ? Date.parse(entry.timestamp) : Number.NaN;
-    const timestamp = Number.isFinite(ts) ? ts : Date.now();
     return {
       role: "system",
       content: [{ type: "text", text: "Compaction" }],
-      timestamp,
+      timestamp: parseTranscriptTimestamp(entry.timestamp),
       __openclaw: {
         kind: "compaction",
         id: typeof entry.id === "string" ? entry.id : undefined,
