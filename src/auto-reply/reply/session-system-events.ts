@@ -20,13 +20,22 @@ import {
 const selectGenericSystemEvents = (events: readonly SystemEvent[]): SystemEvent[] =>
   events.filter((event) => !isExecCompletionEvent(event.text));
 
+export type FormattedSystemEvents = {
+  block?: string;
+  entries: SystemEvent[];
+};
+
 /** Drain queued system events, format as `System:` lines, return the block (or undefined). */
-export async function drainFormattedSystemEvents(params: {
+type FormatSystemEventsParams = {
   cfg: OpenClawConfig;
-  sessionKey: string;
   isMainSession: boolean;
   isNewSession: boolean;
-}): Promise<string | undefined> {
+  includeChannelSummary?: boolean;
+};
+
+export async function formatSystemEventEntries(
+  params: FormatSystemEventsParams & { entries: readonly SystemEvent[] },
+): Promise<string | undefined> {
   const compactSystemEvent = (line: string): string | null => {
     const trimmed = line.trim();
     if (!trimmed) {
@@ -91,14 +100,8 @@ export async function drainFormattedSystemEvents(params: {
   };
 
   const systemLines: string[] = [];
-  // Exec completions have a dedicated heartbeat prompt; leave those entries queued
-  // so the heartbeat path can consume and deliver them.
-  const queued = consumeSelectedSystemEventEntries(
-    params.sessionKey,
-    selectGenericSystemEvents(peekSystemEventEntries(params.sessionKey)),
-  );
   systemLines.push(
-    ...queued.flatMap((event) => {
+    ...params.entries.flatMap((event) => {
       const compacted = compactSystemEvent(event.text);
       if (!compacted) {
         return [];
@@ -110,7 +113,7 @@ export async function drainFormattedSystemEvents(params: {
         .map((subline, index) => `${prefix}: ${index === 0 ? `${timestamp} ` : ""}${subline}`);
     }),
   );
-  if (params.isMainSession && params.isNewSession) {
+  if ((params.includeChannelSummary ?? true) && params.isMainSession && params.isNewSession) {
     const summary = await buildChannelSummary(params.cfg);
     if (summary.length > 0) {
       systemLines.unshift(
@@ -125,4 +128,23 @@ export async function drainFormattedSystemEvents(params: {
   // Each sub-line gets its own prefix so continuation lines can't be mistaken
   // for regular user content.
   return systemLines.join("\n");
+}
+
+export async function peekFormattedSystemEvents(
+  params: FormatSystemEventsParams & { sessionKey: string },
+): Promise<FormattedSystemEvents> {
+  // Exec completions have a dedicated heartbeat prompt; leave those entries queued
+  // so the heartbeat path can consume and deliver them.
+  const entries = selectGenericSystemEvents(peekSystemEventEntries(params.sessionKey));
+  const block = await formatSystemEventEntries({ ...params, entries });
+  return block ? { block, entries } : { entries };
+}
+
+/** Drain queued system events, format as `System:` lines, return the block (or undefined). */
+export async function drainFormattedSystemEvents(
+  params: FormatSystemEventsParams & { sessionKey: string },
+): Promise<string | undefined> {
+  const entries = selectGenericSystemEvents(peekSystemEventEntries(params.sessionKey));
+  consumeSelectedSystemEventEntries(params.sessionKey, entries);
+  return await formatSystemEventEntries({ ...params, entries });
 }

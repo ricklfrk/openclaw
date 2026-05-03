@@ -31,11 +31,33 @@ vi.mock("../../config/sessions/paths.js", () => ({
 
 const storeRuntimeLoads = vi.hoisted(() => vi.fn());
 const updateSessionStore = vi.hoisted(() => vi.fn());
+const consumeSystemEventEntriesMock = vi.hoisted(() => vi.fn());
+const drainFormattedSystemEventsMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const formatSystemEventEntriesMock = vi.hoisted(() =>
+  vi.fn(async ({ entries }: { entries: { text: string }[] }) =>
+    entries.length > 0 ? entries.map((event) => event.text).join("\n") : undefined,
+  ),
+);
+const peekFormattedSystemEventsMock = vi.hoisted(() =>
+  vi.fn(async (params: unknown) => {
+    const block = await drainFormattedSystemEventsMock(params);
+    return block ? { block, entries: [{ text: block, ts: 1, trusted: true }] } : { entries: [] };
+  }),
+);
 
 vi.mock("../../config/sessions/store.runtime.js", () => {
   storeRuntimeLoads();
   return {
     updateSessionStore,
+  };
+});
+
+vi.mock("../../infra/system-events.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../infra/system-events.js")>();
+  return {
+    ...actual,
+    consumeSelectedSystemEventEntries: (...args: unknown[]) =>
+      consumeSystemEventEntriesMock(...args),
   };
 });
 
@@ -118,7 +140,9 @@ vi.mock("./session-updates.runtime.js", () => ({
 }));
 
 vi.mock("./session-system-events.js", () => ({
-  drainFormattedSystemEvents: vi.fn().mockResolvedValue(undefined),
+  drainFormattedSystemEvents: drainFormattedSystemEventsMock,
+  formatSystemEventEntries: formatSystemEventEntriesMock,
+  peekFormattedSystemEvents: peekFormattedSystemEventsMock,
 }));
 
 vi.mock("./typing-mode.js", () => ({
@@ -1452,6 +1476,25 @@ describe("runPreparedReply media-only handling", () => {
     expect(call).toBeTruthy();
     expect(call?.commandBody).toContain("System: [t] Model switched.");
     expect(call?.followupRun.run.extraSystemPrompt ?? "").not.toContain("Runtime System Events");
+  });
+
+  it("consumes captured system events after a reply run is accepted", async () => {
+    vi.mocked(drainFormattedSystemEvents).mockResolvedValueOnce("System: [t] Cron reminder.");
+
+    await expect(runPreparedReply(baseParams())).resolves.toEqual({ text: "ok" });
+
+    expect(consumeSystemEventEntriesMock).toHaveBeenCalledWith("session-key", [
+      expect.objectContaining({ text: "System: [t] Cron reminder." }),
+    ]);
+  });
+
+  it("keeps captured system events queued when the reply run fails", async () => {
+    vi.mocked(drainFormattedSystemEvents).mockResolvedValueOnce("System: [t] Cron reminder.");
+    vi.mocked(runReplyAgent).mockRejectedValueOnce(new Error("provider connection error"));
+
+    await expect(runPreparedReply(baseParams())).rejects.toThrow("provider connection error");
+
+    expect(consumeSystemEventEntriesMock).not.toHaveBeenCalled();
   });
 
   it("downgrades sender ownership when drained system events include untrusted lines", async () => {

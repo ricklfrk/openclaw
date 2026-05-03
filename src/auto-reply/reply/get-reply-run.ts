@@ -19,6 +19,7 @@ import { resolveSilentReplySettings } from "../../config/silent-reply.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
 import { measureDiagnosticsTimelineSpan } from "../../infra/diagnostics-timeline.js";
+import { consumeSelectedSystemEventEntries, type SystemEvent } from "../../infra/system-events.js";
 import { clearCommandLane, getQueueSize } from "../../process/command-queue.js";
 import {
   isAcpSessionKey,
@@ -68,7 +69,7 @@ import { isSteeringQueueMode } from "./queue/steering.js";
 import { resolveRuntimePolicySessionKey } from "./runtime-policy-session-key.js";
 import { resolveBareSessionResetPromptState } from "./session-reset-prompt.js";
 import { resolveBareResetBootstrapFileAccess } from "./session-reset-prompt.js";
-import { drainFormattedSystemEvents } from "./session-system-events.js";
+import { formatSystemEventEntries, peekFormattedSystemEvents } from "./session-system-events.js";
 import { buildSessionStartupContextPrelude, shouldApplyStartupContext } from "./startup-context.js";
 import { resolveTypingMode } from "./typing-mode.js";
 import { resolveRunTypingPolicy } from "./typing-policy.js";
@@ -255,6 +256,29 @@ const sessionStoreRuntimeLoader = createLazyImportLoader(
   () => import("../../config/sessions/store.runtime.js"),
 );
 const UNTRUSTED_SYSTEM_EVENT_LINE_RE = /^System \(untrusted\):/m;
+
+function systemEventEntryKey(event: SystemEvent): string {
+  return JSON.stringify([
+    event.text,
+    event.ts,
+    event.contextKey ?? null,
+    event.trusted ?? true,
+    event.deliveryContext ?? null,
+  ]);
+}
+
+function isCapturedSystemEventPrefix(params: {
+  captured: readonly SystemEvent[];
+  current: readonly SystemEvent[];
+}): boolean {
+  if (params.captured.length > params.current.length) {
+    return false;
+  }
+  return params.captured.every((event, index) => {
+    const current = params.current[index];
+    return current !== undefined && systemEventEntryKey(event) === systemEventEntryKey(current);
+  });
+}
 
 function loadPiEmbeddedRuntime() {
   return piEmbeddedRuntimeLoader.load();
@@ -708,26 +732,62 @@ export async function runPreparedReply(
     : !isNewSession && threadStarterBody
       ? `[Thread starter - for context]\n${threadStarterBody}`
       : undefined;
-  const drainedSystemEventBlocks: string[] = [];
+  const capturedSystemEventBlocks: string[] = [];
+  const capturedSystemEventEntries: SystemEvent[] = [];
+  let channelSummaryCaptured = false;
   let forceSenderIsOwnerFalseFromSystemEvents = false;
+  const capturePendingSystemEvents = async () => {
+    const snapshot = await peekFormattedSystemEvents({
+      cfg,
+      sessionKey,
+      isMainSession,
+      isNewSession,
+      includeChannelSummary: !channelSummaryCaptured,
+    });
+    const prefixMatches = isCapturedSystemEventPrefix({
+      captured: capturedSystemEventEntries,
+      current: snapshot.entries,
+    });
+    const newEntries = prefixMatches
+      ? snapshot.entries.slice(capturedSystemEventEntries.length)
+      : capturedSystemEventEntries.length === 0
+        ? snapshot.entries
+        : [];
+    const eventsBlock =
+      capturedSystemEventEntries.length === 0
+        ? snapshot.block
+        : await formatSystemEventEntries({
+            cfg,
+            entries: newEntries,
+            isMainSession,
+            isNewSession,
+            includeChannelSummary: !channelSummaryCaptured,
+          });
+    channelSummaryCaptured = true;
+    if (newEntries.length > 0) {
+      capturedSystemEventEntries.push(...newEntries);
+    }
+    if (eventsBlock) {
+      capturedSystemEventBlocks.push(eventsBlock);
+      if (UNTRUSTED_SYSTEM_EVENT_LINE_RE.test(eventsBlock)) {
+        forceSenderIsOwnerFalseFromSystemEvents = true;
+      }
+    }
+  };
+  const consumeCapturedSystemEvents = () => {
+    if (capturedSystemEventEntries.length === 0) {
+      return;
+    }
+    consumeSelectedSystemEventEntries(sessionKey, [...capturedSystemEventEntries]);
+    capturedSystemEventEntries.length = 0;
+  };
   const rebuildPromptBodies = async (): Promise<{
     prefixedCommandBody: string;
     queuedBody: string;
     transcriptCommandBody: string;
   }> => {
     if (!useFastReplyRuntime) {
-      const eventsBlock = await drainFormattedSystemEvents({
-        cfg,
-        sessionKey,
-        isMainSession,
-        isNewSession,
-      });
-      if (eventsBlock) {
-        drainedSystemEventBlocks.push(eventsBlock);
-        if (UNTRUSTED_SYSTEM_EVENT_LINE_RE.test(eventsBlock)) {
-          forceSenderIsOwnerFalseFromSystemEvents = true;
-        }
-      }
+      await capturePendingSystemEvents();
     }
     return buildReplyPromptBodies({
       ctx,
@@ -736,7 +796,7 @@ export async function runPreparedReply(
       prefixedBody: prefixedBodyCore,
       transcriptBody: transcriptBodyBase,
       threadContextNote,
-      systemEventBlocks: drainedSystemEventBlocks,
+      systemEventBlocks: capturedSystemEventBlocks,
     });
   };
   const skillResult =
@@ -1070,7 +1130,7 @@ export async function runPreparedReply(
         }
       : undefined;
 
-  return runReplyAgent({
+  const reply = await runReplyAgent({
     commandBody: prefixedCommandBody,
     transcriptCommandBody,
     followupRun,
@@ -1109,4 +1169,6 @@ export async function runPreparedReply(
     resetTriggered: effectiveResetTriggered,
     replyThreadingOverride,
   });
+  consumeCapturedSystemEvents();
+  return reply;
 }
