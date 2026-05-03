@@ -100,6 +100,7 @@ const GPT_CHAT_BREVITY_ACK_MAX_CHARS = 420;
 const GPT_CHAT_BREVITY_ACK_MAX_SENTENCES = 3;
 const GPT_CHAT_BREVITY_SOFT_MAX_CHARS = 900;
 const GPT_CHAT_BREVITY_SOFT_MAX_SENTENCES = 6;
+const SYSTEM_EVENT_LINE_RE = /^System(?: \(untrusted\))?:/m;
 
 function readApprovalScopeValue(value: unknown): "turn" | "session" | undefined {
   return value === "turn" || value === "session" ? value : undefined;
@@ -1616,6 +1617,8 @@ export async function runAgentTurnWithFallback(params: {
                 prompt: resolveFallbackRetryPrompt({
                   body: params.commandBody,
                   isFallbackRetry,
+                  preserveBodyOnRetry:
+                    params.isHeartbeat === true && SYSTEM_EVENT_LINE_RE.test(params.commandBody),
                 }),
                 transcriptPrompt: params.transcriptCommandBody,
                 currentTurnContext: params.followupRun.currentTurnContext,

@@ -202,6 +202,18 @@ describe("agent-runner-utils", () => {
     ).toBe("Continue where you left off. The previous model attempt failed or timed out.");
   });
 
+  it("can preserve the original trigger for fallback retries", () => {
+    expect(
+      resolveFallbackRetryPrompt({
+        body: "System: [t] cron reminder\n\n[OpenClaw heartbeat poll]",
+        isFallbackRetry: true,
+        preserveBodyOnRetry: true,
+      }),
+    ).toBe(
+      "Continue where you left off. The previous model attempt failed or timed out.\n\nOriginal trigger:\n\nSystem: [t] cron reminder\n\n[OpenClaw heartbeat poll]",
+    );
+  });
+
   it("prefers OriginatingChannel over Provider for messageProvider", () => {
     const run = makeRun();
 
