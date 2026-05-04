@@ -144,6 +144,11 @@ control_ui_assets_missing() {
   esac
 }
 
+app_is_running() {
+  pgrep -f "/Applications/OpenClaw.app/Contents/MacOS/OpenClaw" >/dev/null 2>&1 \
+    || pgrep -x "OpenClaw" >/dev/null 2>&1
+}
+
 log "Waiting for gateway on port $GATEWAY_PORT..."
 WAITED=0
 while [ "$WAITED" -lt 20 ]; do
@@ -156,8 +161,10 @@ while [ "$WAITED" -lt 20 ]; do
 done
 
 # 9) Fallback: if Mac app didn't start the gateway, use daemon install.
-if [ "$WAITED" -ge 20 ]; then
-  log "Gateway not started by Mac app; installing daemon as fallback"
+if [ "$WAITED" -ge 20 ] && app_is_running; then
+  log "Gateway not responding yet but Mac app is running; skipping daemon fallback"
+elif [ "$WAITED" -ge 20 ]; then
+  log "Gateway not started by Mac app and app is down; installing daemon as fallback"
   if ! node openclaw.mjs daemon install --force --runtime node; then
     log "Warning: daemon install also failed"
   fi
@@ -196,7 +203,7 @@ done
 
 if [ "$STABLE" -eq 1 ]; then
   log "Gateway stable ✓"
-elif pgrep -f "OpenClaw.app/Contents/MacOS/OpenClaw" >/dev/null 2>&1; then
+elif app_is_running; then
   # Mac app is the gateway owner when running — it will enable + bootstrap
   # ai.openclaw.gateway on its own via GatewayLaunchAgentManager and watches
   # the job with its own supervisor. If this script *also* bootouts+bootstraps
