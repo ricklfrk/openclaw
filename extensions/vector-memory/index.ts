@@ -40,6 +40,12 @@ import {
   type AdmissionControlConfig,
 } from "./src/admission-control.js";
 import {
+  assertWithinAutoRecallDeadline,
+  createAutoRecallDeadline,
+  remainingAutoRecallMs,
+  timeoutWithinAutoRecallDeadline,
+} from "./src/auto-recall-timeout.js";
+import {
   createDecayEngine,
   type DecayConfig,
   DEFAULT_DECAY_CONFIG,
@@ -1669,6 +1675,7 @@ export default definePluginEntry({
         "before_prompt_build",
         async (event, ctx) => {
           const tHookStart = performance.now();
+          const autoRecallDeadline = createAutoRecallDeadline(tHookStart);
           try {
             const agentId = ctx?.agentId ?? "main";
 
@@ -1785,9 +1792,10 @@ export default definePluginEntry({
             let embeddingUnavailable = false;
             const tQueryEmbed = performance.now();
             try {
+              assertWithinAutoRecallDeadline(autoRecallDeadline);
               queryVector = await withTimeout(
                 embedder.embedQuery(query),
-                autoRecallTimeoutMs,
+                timeoutWithinAutoRecallDeadline(autoRecallTimeoutMs, autoRecallDeadline),
                 "vector-memory recall query embedding",
               );
             } catch (err) {
@@ -1799,92 +1807,100 @@ export default definePluginEntry({
               timings.queryEmbed = Math.round(performance.now() - tQueryEmbed);
             }
 
-            const [extractedResults, workspaceResults, dailyResults] = await Promise.all([
-              (async () => {
-                const t = performance.now();
-                try {
-                  return await withTimeout(
-                    extractedRetriever.retrieve({
-                      query,
-                      bm25Query,
-                      queryVector,
-                      embeddingUnavailable,
-                      limit: extractedLimit,
-                      entityTags: queryEntityTags.length > 0 ? queryEntityTags : undefined,
-                    }),
-                    autoRecallTimeoutMs,
-                    "vector-memory recall (extracted)",
-                  );
-                } catch (err) {
-                  api.logger.error(
-                    `vector-memory: [${agentId}] extracted retrieve failed: ${String(err)}`,
-                  );
-                  return [] as Awaited<ReturnType<typeof extractedRetriever.retrieve>>;
-                } finally {
-                  timings.extracted = Math.round(performance.now() - t);
-                }
-              })(),
-              (async () => {
-                if (!workspaceScope.enabled) {
-                  return [] as ScopedRetrievalResult[];
-                }
-                const t = performance.now();
-                try {
-                  return await withTimeout(
-                    retrieveScope({
-                      query,
-                      bm25Query,
-                      queryVector,
-                      embeddingUnavailable,
-                      recall: workspaceScope.recall,
-                      store: storeManager.getWorkspaceStore(agentId),
-                      embedder,
-                      log: (msg) => logDebug(msg),
-                      rerank: sharedRerankConfig,
-                    }),
-                    autoRecallTimeoutMs,
-                    "vector-memory recall (workspace)",
-                  );
-                } catch (err) {
-                  api.logger.error(
-                    `vector-memory: [${agentId}] workspace retrieve failed: ${String(err)}`,
-                  );
-                  return [] as ScopedRetrievalResult[];
-                } finally {
-                  timings.workspace = Math.round(performance.now() - t);
-                }
-              })(),
-              (async () => {
-                if (!dailyScope.enabled) {
-                  return [] as ScopedRetrievalResult[];
-                }
-                const t = performance.now();
-                try {
-                  return await withTimeout(
-                    retrieveScope({
-                      query,
-                      bm25Query,
-                      queryVector,
-                      embeddingUnavailable,
-                      recall: dailyScope.recall,
-                      store: storeManager.getDailyStore(agentId),
-                      embedder,
-                      log: (msg) => logDebug(msg),
-                      rerank: sharedRerankConfig,
-                    }),
-                    autoRecallTimeoutMs,
-                    "vector-memory recall (daily)",
-                  );
-                } catch (err) {
-                  api.logger.error(
-                    `vector-memory: [${agentId}] daily retrieve failed: ${String(err)}`,
-                  );
-                  return [] as ScopedRetrievalResult[];
-                } finally {
-                  timings.daily = Math.round(performance.now() - t);
-                }
-              })(),
-            ]);
+            assertWithinAutoRecallDeadline(autoRecallDeadline);
+            const [extractedResults, workspaceResults, dailyResults] = await withTimeout(
+              Promise.all([
+                (async () => {
+                  const t = performance.now();
+                  try {
+                    assertWithinAutoRecallDeadline(autoRecallDeadline);
+                    return await withTimeout(
+                      extractedRetriever.retrieve({
+                        query,
+                        bm25Query,
+                        queryVector,
+                        embeddingUnavailable,
+                        limit: extractedLimit,
+                        entityTags: queryEntityTags.length > 0 ? queryEntityTags : undefined,
+                      }),
+                      timeoutWithinAutoRecallDeadline(autoRecallTimeoutMs, autoRecallDeadline),
+                      "vector-memory recall (extracted)",
+                    );
+                  } catch (err) {
+                    api.logger.error(
+                      `vector-memory: [${agentId}] extracted retrieve failed: ${String(err)}`,
+                    );
+                    return [] as Awaited<ReturnType<typeof extractedRetriever.retrieve>>;
+                  } finally {
+                    timings.extracted = Math.round(performance.now() - t);
+                  }
+                })(),
+                (async () => {
+                  if (!workspaceScope.enabled) {
+                    return [] as ScopedRetrievalResult[];
+                  }
+                  const t = performance.now();
+                  try {
+                    assertWithinAutoRecallDeadline(autoRecallDeadline);
+                    return await withTimeout(
+                      retrieveScope({
+                        query,
+                        bm25Query,
+                        queryVector,
+                        embeddingUnavailable,
+                        recall: workspaceScope.recall,
+                        store: storeManager.getWorkspaceStore(agentId),
+                        embedder,
+                        log: (msg) => logDebug(msg),
+                        rerank: sharedRerankConfig,
+                      }),
+                      timeoutWithinAutoRecallDeadline(autoRecallTimeoutMs, autoRecallDeadline),
+                      "vector-memory recall (workspace)",
+                    );
+                  } catch (err) {
+                    api.logger.error(
+                      `vector-memory: [${agentId}] workspace retrieve failed: ${String(err)}`,
+                    );
+                    return [] as ScopedRetrievalResult[];
+                  } finally {
+                    timings.workspace = Math.round(performance.now() - t);
+                  }
+                })(),
+                (async () => {
+                  if (!dailyScope.enabled) {
+                    return [] as ScopedRetrievalResult[];
+                  }
+                  const t = performance.now();
+                  try {
+                    assertWithinAutoRecallDeadline(autoRecallDeadline);
+                    return await withTimeout(
+                      retrieveScope({
+                        query,
+                        bm25Query,
+                        queryVector,
+                        embeddingUnavailable,
+                        recall: dailyScope.recall,
+                        store: storeManager.getDailyStore(agentId),
+                        embedder,
+                        log: (msg) => logDebug(msg),
+                        rerank: sharedRerankConfig,
+                      }),
+                      timeoutWithinAutoRecallDeadline(autoRecallTimeoutMs, autoRecallDeadline),
+                      "vector-memory recall (daily)",
+                    );
+                  } catch (err) {
+                    api.logger.error(
+                      `vector-memory: [${agentId}] daily retrieve failed: ${String(err)}`,
+                    );
+                    return [] as ScopedRetrievalResult[];
+                  } finally {
+                    timings.daily = Math.round(performance.now() - t);
+                  }
+                })(),
+              ]),
+              remainingAutoRecallMs(autoRecallDeadline),
+              "vector-memory auto-recall hard timeout",
+            );
 
             const retrieveMs = Math.round(performance.now() - tScopeStart);
             const rt = extractedRetriever.lastTimings;
@@ -2031,6 +2047,8 @@ export default definePluginEntry({
             if (sections.length === 0) {
               return undefined;
             }
+
+            assertWithinAutoRecallDeadline(autoRecallDeadline);
 
             // Prefix note to stop the agent from mistaking recalled memories
             // for a fresh user prompt (has been misread as an instruction
