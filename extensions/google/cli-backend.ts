@@ -28,16 +28,13 @@ export function buildGoogleGeminiCliBackend(): CliBackendPlugin {
     nativeToolMode: "always-on",
     config: {
       command: "gemini",
-      args: ["--skip-trust", "--output-format", "json", "--prompt", "{prompt}"],
-      resumeArgs: [
-        "--skip-trust",
-        "--resume",
-        "{sessionId}",
-        "--output-format",
-        "json",
-        "--prompt",
-        "{prompt}",
-      ],
+      // `--skip-trust` was removed in @google/gemini-cli ≥ 0.38.x. Yargs
+      // rejects the flag with `Unknown arguments: skip-trust, skipTrust` and
+      // exits non-zero, so every call would otherwise fail. Trust prompts are
+      // now handled via `~/.gemini/trustedFolders.json` / Policy Engine.
+      // See `https://github.com/openclaw/openclaw/issues/74749`.
+      args: ["--output-format", "json", "--prompt", "{prompt}"],
+      resumeArgs: ["--resume", "{sessionId}", "--output-format", "json", "--prompt", "{prompt}"],
       output: "json",
       input: "arg",
       imageArg: "@",
@@ -46,6 +43,12 @@ export function buildGoogleGeminiCliBackend(): CliBackendPlugin {
       modelAliases: GEMINI_MODEL_ALIASES,
       sessionMode: "existing",
       sessionIdFields: ["session_id", "sessionId"],
+      // `gemini` reads its system prompt from the file pointed to by
+      // `GEMINI_SYSTEM_MD` (CLI ≥ 0.34.x). The CLI exposes no
+      // `--system-prompt` arg, so without this env hook any
+      // `before_prompt_build` hook returning `{ systemPrompt }` would be
+      // silently dropped by `cli-runner/helpers.ts:resolveSystemPromptUsage`.
+      systemPromptEnvVar: "GEMINI_SYSTEM_MD",
       reliability: {
         watchdog: {
           fresh: { ...CLI_FRESH_WATCHDOG_DEFAULTS },

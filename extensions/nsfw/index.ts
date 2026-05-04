@@ -6,7 +6,18 @@
  *
  * When active:
  *   • Part 1 — replaces the Identity line in the system prompt
- *   • Part 2 — injected after conversation history (prependContext)
+ *   • Part 2 — appended to the end of the system prompt
+ *
+ * Both fragments are returned via `{ systemPrompt }` so they are delivered as
+ * **system role**, not as user-message context. For HTTP-API providers (`lab`,
+ * `anthropic`, `openai`, …) this lands directly. For the `google-gemini-cli`
+ * cli-backend the runner writes the system prompt to a temp file and points
+ * `GEMINI_SYSTEM_MD` at it (see `extensions/google/cli-backend.ts` and
+ * `cli-runner/helpers.ts:buildCliSystemPromptEnv`); the `gemini` CLI then
+ * fully replaces its built-in system prompt with the NSFW payload. Routing
+ * the payload as user prompt content (the previous `prependContext` fallback
+ * for gcli) made the model treat the entire jailbreak as a user-supplied
+ * request, which Gemini 3.x is trained to reject.
  */
 
 import { randomBytes } from "node:crypto";
@@ -343,14 +354,17 @@ export default definePluginEntry({
 
     // Inject prompt fragments when enabled for this agent.
     // Uses before_prompt_build so the hook always runs in the prompt-build phase
-    // where event.systemPrompt is available.
+    // where event.systemPrompt is available (cli-backend prepare.ts now also
+    // forwards the built systemPrompt; see file header).
+    //
     // Part 1 inline-replaces the core identity line (see NSFW_IDENTITY_LINES).
     // Part 2 is appended to the end of the system prompt (not user message)
     // to avoid Gemini safety filters flagging jailbreak patterns in user content.
     api.on("before_prompt_build", (event, ctx) => {
       const agent = ctx?.agentId ?? "main";
+      const providerId = ctx?.modelProviderId;
       api.logger.info(
-        `nsfw: before_prompt_build fired for agent="${agent}", enabled=${nsfwEnabledAgents.has(agent)}, hasSystemPrompt=${!!event.systemPrompt}`,
+        `nsfw: before_prompt_build fired for agent="${agent}", enabled=${nsfwEnabledAgents.has(agent)}, provider=${providerId ?? "?"}, hasSystemPrompt=${!!event.systemPrompt}`,
       );
       if (!nsfwEnabledAgents.has(agent)) {
         return undefined;

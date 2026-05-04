@@ -143,6 +143,16 @@ export type CliBackendConfig = {
   systemPromptMode?: "append" | "replace";
   /** When to send system prompt. */
   systemPromptWhen?: "first" | "always" | "never";
+  /**
+   * Env var name that should point at a system-prompt file written per run.
+   * For CLIs that take the system prompt only via env (e.g. `GEMINI_SYSTEM_MD`
+   * for `@google/gemini-cli`), declare this and the runner will write a temp
+   * file and inject `<envVar>=<filePath>` into the spawned child env.
+   * Composes with `systemPromptArg` / `systemPromptFileArg` /
+   * `systemPromptFileConfigKey`; any one of them satisfies
+   * `resolveSystemPromptUsage`.
+   */
+  systemPromptEnvVar?: string;
   /** Flag used to pass image paths. */
   imageArg?: string;
   /** How to pass multiple images. */

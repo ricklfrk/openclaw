@@ -363,6 +363,7 @@ export async function prepareCliRunContext(
       config: params.config ?? getRuntimeConfig(),
       prompt: params.prompt,
       messages: await loadOpenClawHistoryMessages(),
+      systemPrompt,
       hookCtx: {
         runId: params.runId,
         agentId: sessionAgentId,

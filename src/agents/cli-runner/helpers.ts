@@ -172,7 +172,8 @@ export function resolveSystemPromptUsage(params: {
   if (
     !params.backend.systemPromptArg?.trim() &&
     !params.backend.systemPromptFileArg?.trim() &&
-    !params.backend.systemPromptFileConfigKey?.trim()
+    !params.backend.systemPromptFileConfigKey?.trim() &&
+    !params.backend.systemPromptEnvVar?.trim()
   ) {
     return null;
   }
@@ -306,7 +307,8 @@ export async function writeCliSystemPromptFile(params: {
 }): Promise<{ filePath?: string; cleanup: () => Promise<void> }> {
   if (
     !params.backend.systemPromptFileArg?.trim() &&
-    !params.backend.systemPromptFileConfigKey?.trim()
+    !params.backend.systemPromptFileConfigKey?.trim() &&
+    !params.backend.systemPromptEnvVar?.trim()
   ) {
     return { cleanup: async () => {} };
   }
@@ -322,6 +324,25 @@ export async function writeCliSystemPromptFile(params: {
     filePath,
     cleanup: async () => await workspace.cleanup(),
   };
+}
+
+/**
+ * Build env entries that point a backend-declared env var at the system-prompt
+ * file written by `writeCliSystemPromptFile`. Returns an empty record when the
+ * backend does not declare `systemPromptEnvVar` or no file was written.
+ *
+ * Used by CLIs that accept the system prompt only via env (e.g. `gemini` reads
+ * `GEMINI_SYSTEM_MD`).
+ */
+export function buildCliSystemPromptEnv(params: {
+  backend: CliBackendConfig;
+  systemPromptFilePath?: string;
+}): Record<string, string> {
+  const envVar = params.backend.systemPromptEnvVar?.trim();
+  if (!envVar || !params.systemPromptFilePath) {
+    return {};
+  }
+  return { [envVar]: params.systemPromptFilePath };
 }
 
 export async function prepareCliPromptImagePayload(params: {

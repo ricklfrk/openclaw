@@ -23,6 +23,7 @@ import { prepareClaudeCliSkillsPlugin } from "./claude-skills-plugin.js";
 import {
   buildCliSupervisorScopeKey,
   buildCliArgs,
+  buildCliSystemPromptEnv,
   resolveCliRunQueueKey,
   enqueueCliRun,
   prepareCliPromptImagePayload,
@@ -243,6 +244,10 @@ export async function executePreparedCliRun(
           systemPrompt: systemPromptArg,
         })
       : undefined;
+  const systemPromptEnv = buildCliSystemPromptEnv({
+    backend,
+    systemPromptFilePath: systemPromptFile?.filePath,
+  });
 
   const basePrompt = cliSessionIdToUse
     ? params.prompt
@@ -363,6 +368,17 @@ export async function executePreparedCliRun(
             );
           }
           Object.assign(next, context.preparedBackend.env);
+
+          if (Object.keys(systemPromptEnv).length > 0) {
+            Object.assign(
+              next,
+              sanitizeHostExecEnv({
+                baseEnv: {},
+                overrides: systemPromptEnv,
+                blockPathOverrides: true,
+              }),
+            );
+          }
 
           // Never mark Claude CLI as host-managed. That marker routes runs into
           // Anthropic's separate host-managed usage tier instead of normal CLI

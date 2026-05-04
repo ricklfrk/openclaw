@@ -6,9 +6,11 @@ import { resolvePreferredOpenClawTmpDir } from "../infra/tmp-openclaw-dir.js";
 import { MAX_IMAGE_BYTES } from "../media/constants.js";
 import {
   buildCliArgs,
+  buildCliSystemPromptEnv,
   loadPromptRefImages,
   prepareCliPromptImagePayload,
   resolveCliRunQueueKey,
+  resolveSystemPromptUsage,
   writeCliImages,
   writeCliSystemPromptFile,
 } from "./cli-runner/helpers.js";
@@ -469,6 +471,111 @@ describe("writeCliSystemPromptFile", () => {
       await written.cleanup();
     }
     await expect(fs.access(written.filePath ?? "")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("writes a temp file when only systemPromptEnvVar is declared", async () => {
+    const written = await writeCliSystemPromptFile({
+      backend: {
+        command: "gemini",
+        systemPromptEnvVar: "GEMINI_SYSTEM_MD",
+      },
+      systemPrompt: "Custom persona",
+    });
+
+    try {
+      expect(written.filePath).toContain("openclaw-cli-system-prompt-");
+      expect(written.filePath?.endsWith("system-prompt.md")).toBe(true);
+      await expect(fs.readFile(written.filePath ?? "", "utf-8")).resolves.toBe("Custom persona");
+    } finally {
+      await written.cleanup();
+    }
+  });
+
+  it("returns no file path when no system prompt arg/file/env is configured", async () => {
+    const written = await writeCliSystemPromptFile({
+      backend: { command: "noop" },
+      systemPrompt: "ignored",
+    });
+    try {
+      expect(written.filePath).toBeUndefined();
+    } finally {
+      await written.cleanup();
+    }
+  });
+});
+
+describe("resolveSystemPromptUsage", () => {
+  it("returns the prompt when systemPromptEnvVar is the only configured channel", () => {
+    expect(
+      resolveSystemPromptUsage({
+        backend: {
+          command: "gemini",
+          systemPromptEnvVar: "GEMINI_SYSTEM_MD",
+        },
+        isNewSession: true,
+        systemPrompt: "hello",
+      }),
+    ).toBe("hello");
+  });
+
+  it("drops the prompt when no channel (arg/file/env) is configured", () => {
+    expect(
+      resolveSystemPromptUsage({
+        backend: { command: "noop" },
+        isNewSession: true,
+        systemPrompt: "hello",
+      }),
+    ).toBeNull();
+  });
+
+  it("respects systemPromptWhen=first on resumed sessions even with envVar set", () => {
+    expect(
+      resolveSystemPromptUsage({
+        backend: {
+          command: "gemini",
+          systemPromptEnvVar: "GEMINI_SYSTEM_MD",
+          systemPromptWhen: "first",
+        },
+        isNewSession: false,
+        systemPrompt: "hello",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("buildCliSystemPromptEnv", () => {
+  it("maps the declared env var to the system-prompt file path", () => {
+    expect(
+      buildCliSystemPromptEnv({
+        backend: {
+          command: "gemini",
+          systemPromptEnvVar: "GEMINI_SYSTEM_MD",
+        },
+        systemPromptFilePath: "/tmp/openclaw-cli-system-prompt-abc/system-prompt.md",
+      }),
+    ).toEqual({
+      GEMINI_SYSTEM_MD: "/tmp/openclaw-cli-system-prompt-abc/system-prompt.md",
+    });
+  });
+
+  it("returns an empty record when the backend declares no envVar", () => {
+    expect(
+      buildCliSystemPromptEnv({
+        backend: { command: "claude" },
+        systemPromptFilePath: "/tmp/file.md",
+      }),
+    ).toEqual({});
+  });
+
+  it("returns an empty record when no system-prompt file was written", () => {
+    expect(
+      buildCliSystemPromptEnv({
+        backend: {
+          command: "gemini",
+          systemPromptEnvVar: "GEMINI_SYSTEM_MD",
+        },
+      }),
+    ).toEqual({});
   });
 });
 
