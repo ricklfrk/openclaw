@@ -7,6 +7,7 @@ import type {
 
 export type AgentModelConfig =
   | string
+  | string[]
   | {
       /** Primary model (provider/model). */
       primary?: string;

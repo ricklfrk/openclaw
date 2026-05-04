@@ -30,7 +30,7 @@ export const HeartbeatSchema = z
       })
       .strict()
       .optional(),
-    model: z.string().optional(),
+    model: AgentModelSchema.optional(),
     session: z.string().optional(),
     includeReasoning: z.boolean().optional(),
     target: z.string().optional(),
@@ -869,6 +869,7 @@ export const AgentEntrySchema = z
         model: z
           .union([
             z.string(),
+            z.array(z.string()),
             z
               .object({
                 primary: z.string().optional(),

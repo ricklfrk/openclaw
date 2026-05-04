@@ -148,6 +148,19 @@ describe("resolveAgentConfig", () => {
     expect(resolveAgentExplicitModelPrimary(cfgWithObjectDefault, "main")).toBeUndefined();
     expect(resolveAgentEffectiveModelPrimary(cfgWithObjectDefault, "main")).toBe("openai/gpt-5.4");
 
+    const cfgWithListDefault: OpenClawConfig = {
+      agents: {
+        defaults: {
+          model: ["anthropic/claude-sonnet-4-6", "anthropic-proxy/claude-sonnet-4-6"],
+        },
+        list: [{ id: "main" }],
+      },
+    };
+    expect(resolveAgentExplicitModelPrimary(cfgWithListDefault, "main")).toBeUndefined();
+    expect(resolveAgentEffectiveModelPrimary(cfgWithListDefault, "main")).toBe(
+      "anthropic/claude-sonnet-4-6",
+    );
+
     const cfgNoDefaults: OpenClawConfig = {
       agents: {
         list: [{ id: "main" }],
@@ -182,6 +195,21 @@ describe("resolveAgentConfig", () => {
     expect(resolveAgentExplicitModelPrimary(cfg, "linus")).toBe("anthropic/claude-sonnet-4-6");
     expect(resolveAgentEffectiveModelPrimary(cfg, "linus")).toBe("anthropic/claude-sonnet-4-6");
     expect(resolveAgentModelFallbacksOverride(cfg, "linus")).toEqual(["openai/gpt-5.4"]);
+
+    const cfgList: OpenClawConfig = {
+      agents: {
+        list: [
+          {
+            id: "linus",
+            model: ["anthropic/claude-sonnet-4-6", "anthropic-proxy/claude-sonnet-4-6"],
+          },
+        ],
+      },
+    };
+    expect(resolveAgentExplicitModelPrimary(cfgList, "linus")).toBe("anthropic/claude-sonnet-4-6");
+    expect(resolveAgentModelFallbacksOverride(cfgList, "linus")).toEqual([
+      "anthropic-proxy/claude-sonnet-4-6",
+    ]);
 
     // If an agent owns a primary, missing fallbacks means no model fallback.
     const cfgNoOverride: OpenClawConfig = {

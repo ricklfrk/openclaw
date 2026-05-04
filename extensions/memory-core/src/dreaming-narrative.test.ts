@@ -663,6 +663,43 @@ describe("generateAndAppendDreamNarrative", () => {
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("session default"));
   });
 
+  it("tries configured model-list entries before the session default", async () => {
+    const workspaceDir = await createTempWorkspace("openclaw-dreaming-narrative-");
+    const subagent = createMockSubagent("The proxy carried the diary home.");
+    subagent.run.mockRejectedValueOnce(new Error("model unavailable"));
+    const logger = createMockLogger();
+    const nowMs = Date.parse("2026-04-05T03:00:00Z");
+    const workspaceHash = createHash("sha1").update(workspaceDir).digest("hex").slice(0, 12);
+    const expectedSessionKey = `dreaming-narrative-light-${workspaceHash}-${nowMs}`;
+    const retrySessionKey = `${expectedSessionKey}-retry-1`;
+
+    await generateAndAppendDreamNarrative({
+      subagent,
+      workspaceDir,
+      data: {
+        phase: "light",
+        snippets: ["API endpoints need authentication"],
+      },
+      nowMs,
+      timezone: "UTC",
+      model: ["anthropic/claude-sonnet-4-6", "anthropic-proxy/claude-sonnet-4-6"],
+      logger,
+    });
+
+    expect(subagent.run).toHaveBeenCalledTimes(2);
+    expect(subagent.run.mock.calls[0]?.[0]).toMatchObject({
+      sessionKey: expectedSessionKey,
+      model: "anthropic/claude-sonnet-4-6",
+    });
+    expect(subagent.run.mock.calls[1]?.[0]).toMatchObject({
+      sessionKey: retrySessionKey,
+      model: "anthropic-proxy/claude-sonnet-4-6",
+    });
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('retrying with configured model "anthropic-proxy/claude-sonnet-4-6"'),
+    );
+  });
+
   it("retries with the session default when the configured model run ends unavailable", async () => {
     const workspaceDir = await createTempWorkspace("openclaw-dreaming-narrative-");
     const subagent = createMockSubagent("The default model carried the diary home.");

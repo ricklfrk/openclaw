@@ -355,8 +355,9 @@ Time format in system prompt. Default: `auto` (OS preference).
 }
 ```
 
-- `model`: accepts either a string (`"provider/model"`) or an object (`{ primary, fallbacks }`).
+- `model`: accepts a string (`"provider/model"`), an ordered list (`["primary", "fallback"]`), or an object (`{ primary, fallbacks }`).
   - String form sets only the primary model.
+  - List form uses the first entry as primary and the rest as ordered failover models.
   - Object form sets primary plus ordered failover models.
 - `imageModel`: accepts either a string (`"provider/model"`) or an object (`{ primary, fallbacks }`).
   - Used by the `image` tool path as its vision-model config.
@@ -532,7 +533,7 @@ Periodic heartbeat runs.
     defaults: {
       heartbeat: {
         every: "30m", // 0m disables
-        model: "openai/gpt-5.4-mini",
+        model: ["anthropic/claude-sonnet-4-6", "anthropic-proxy/claude-sonnet-4-6"],
         includeReasoning: false,
         includeSystemPromptSection: true, // default: true; false omits the Heartbeat section from the system prompt
         lightContext: false, // default: false; true keeps only HEARTBEAT.md from workspace bootstrap files
@@ -553,6 +554,7 @@ Periodic heartbeat runs.
 ```
 
 - `every`: duration string (ms/s/m/h). Default: `30m` (API-key auth) or `1h` (OAuth auth). Set to `0m` to disable.
+- `model`: optional heartbeat-only model override. It accepts a string or ordered list; list fallbacks run before the heartbeat falls back to the agent primary and normal fallback chain.
 - `includeSystemPromptSection`: when false, omits the Heartbeat section from the system prompt and skips `HEARTBEAT.md` injection into bootstrap context. Default: `true`.
 - `suppressToolErrorWarnings`: when true, suppresses tool error warning payloads during heartbeat runs.
 - `timeoutSeconds`: maximum time in seconds allowed for a heartbeat agent turn before it is aborted. Leave unset to use `agents.defaults.timeoutSeconds`.

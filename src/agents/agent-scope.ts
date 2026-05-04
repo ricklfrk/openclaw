@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import { resolveAgentModelFallbackValues } from "../config/model-input.js";
+import {
+  normalizeModelListValues,
+  resolveAgentModelFallbackValues,
+  resolveAgentModelPrimaryValue,
+} from "../config/model-input.js";
 import type { AgentDefaultsConfig } from "../config/types.agent-defaults.js";
 import type { AgentModelConfig } from "../config/types.agents-shared.js";
 import type { AgentConfig } from "../config/types.agents.js";
@@ -15,7 +19,6 @@ import {
   lowercasePreservingWhitespace,
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
-  resolvePrimaryStringValue,
 } from "../shared/string-coerce.js";
 import { resolveUserPath } from "../utils.js";
 import {
@@ -100,7 +103,7 @@ export function resolveAgentExplicitModelPrimary(
   agentId: string,
 ): string | undefined {
   const raw = resolveAgentConfig(cfg, agentId)?.model;
-  return resolvePrimaryStringValue(raw);
+  return resolveAgentModelPrimaryValue(raw);
 }
 
 export function resolveAgentEffectiveModelPrimary(
@@ -109,7 +112,7 @@ export function resolveAgentEffectiveModelPrimary(
 ): string | undefined {
   return (
     resolveAgentExplicitModelPrimary(cfg, agentId) ??
-    resolvePrimaryStringValue(cfg.agents?.defaults?.model)
+    resolveAgentModelPrimaryValue(cfg.agents?.defaults?.model)
   );
 }
 
@@ -122,6 +125,10 @@ function updateAgentModelPrimary(
   existing: AgentModelConfig | undefined,
   primary: string,
 ): AgentModelConfig {
+  if (Array.isArray(existing)) {
+    const [, ...fallbacks] = normalizeModelListValues(existing);
+    return fallbacks.length > 0 ? [primary, ...fallbacks] : primary;
+  }
   if (existing && typeof existing === "object" && !Array.isArray(existing)) {
     return { ...existing, primary };
   }
@@ -163,11 +170,14 @@ export function resolveAgentModelFallbacksOverride(
     return undefined;
   }
   if (typeof raw === "string") {
-    return resolvePrimaryStringValue(raw) ? [] : undefined;
+    return resolveAgentModelPrimaryValue(raw) ? [] : undefined;
+  }
+  if (Array.isArray(raw)) {
+    return resolveAgentModelPrimaryValue(raw) ? normalizeModelListValues(raw).slice(1) : undefined;
   }
   // Important: treat an explicitly provided empty array as an override to disable global fallbacks.
   if (!Object.hasOwn(raw, "fallbacks")) {
-    return Object.hasOwn(raw, "primary") && resolvePrimaryStringValue(raw) ? [] : undefined;
+    return Object.hasOwn(raw, "primary") && resolveAgentModelPrimaryValue(raw) ? [] : undefined;
   }
   return Array.isArray(raw.fallbacks) ? raw.fallbacks : undefined;
 }

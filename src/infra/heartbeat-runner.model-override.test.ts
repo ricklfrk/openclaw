@@ -79,7 +79,7 @@ describe("runHeartbeatOnce – heartbeat model override", () => {
   }
 
   async function runDefaultsHeartbeat(params: {
-    model?: string;
+    model?: HeartbeatConfig["model"];
     suppressToolErrorWarnings?: boolean;
     timeoutSeconds?: number;
     lightContext?: boolean;
@@ -171,6 +171,22 @@ describe("runHeartbeatOnce – heartbeat model override", () => {
       expect.objectContaining({
         isHeartbeat: true,
         heartbeatModelOverride: "ollama/llama3.2:1b",
+        suppressToolErrorWarnings: false,
+      }),
+    );
+  });
+
+  it("passes heartbeat model lists from defaults heartbeat config", async () => {
+    const replyOpts = await runDefaultsHeartbeat({
+      model: ["anthropic/claude-sonnet-4-6", "anthropic-proxy/claude-sonnet-4-6"],
+    });
+    expect(replyOpts).toEqual(
+      expect.objectContaining({
+        isHeartbeat: true,
+        heartbeatModelOverride: [
+          "anthropic/claude-sonnet-4-6",
+          "anthropic-proxy/claude-sonnet-4-6",
+        ],
         suppressToolErrorWarnings: false,
       }),
     );

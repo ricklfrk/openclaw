@@ -370,6 +370,32 @@ describe("buildContextOverflowRecoveryText", () => {
     expect(text).not.toContain("reserveTokensFloor");
   });
 
+  it("points to heartbeat model bleed when the runtime model matches a configured heartbeat model list entry", () => {
+    const text = buildContextOverflowRecoveryText({
+      cfg: {
+        agents: {
+          defaults: {
+            heartbeat: {
+              model: ["anthropic/claude-sonnet-4-6", "anthropic-proxy/claude-sonnet-4-6"],
+            },
+          },
+        },
+      },
+      primaryProvider: "anthropic",
+      primaryModel: "claude-opus-4-6",
+      activeSessionEntry: {
+        sessionId: "session",
+        updatedAt: 1,
+        modelProvider: "anthropic-proxy",
+        model: "claude-sonnet-4-6",
+        contextTokens: 200_000,
+      },
+    });
+
+    expect(text).toContain("anthropic-proxy/claude-sonnet-4-6");
+    expect(text).toContain("heartbeat model bleed");
+  });
+
   it("does not blame heartbeat when the smaller runtime model is not the configured heartbeat model", () => {
     const text = buildContextOverflowRecoveryText({
       cfg: {

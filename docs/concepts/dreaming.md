@@ -72,7 +72,7 @@ Dreaming can ingest redacted session transcripts into the dreaming corpus. When 
 
 ## Dream Diary
 
-Dreaming also keeps a narrative **Dream Diary** in `DREAMS.md`. After each phase has enough material, `memory-core` runs a best-effort background subagent turn and appends a short diary entry. It uses the default runtime model unless `dreaming.model` is configured. If the configured model is unavailable, Dream Diary retries once with the session default model.
+Dreaming also keeps a narrative **Dream Diary** in `DREAMS.md`. After each phase has enough material, `memory-core` runs a best-effort background subagent turn and appends a short diary entry. It uses the default runtime model unless `dreaming.model` is configured. If `dreaming.model` is an ordered list, Dream Diary tries each configured model in order before retrying once with the session default model.
 
 <Note>
 This diary is for human reading in the Dreams UI, not a promotion source. Dreaming-generated diary/report artifacts are excluded from short-term promotion. Only grounded memory snippets are eligible to promote into `MEMORY.md`.
@@ -214,12 +214,12 @@ All settings live under `plugins.entries.memory-core.config.dreaming`.
 <ParamField path="frequency" type="string" default="0 3 * * *">
   Cron cadence for the full dreaming sweep.
 </ParamField>
-<ParamField path="model" type="string">
-  Optional Dream Diary subagent model override. Use a canonical `provider/model` value when also setting a subagent `allowedModels` allowlist.
+<ParamField path="model" type="string | string[]">
+  Optional Dream Diary subagent model override. Use a canonical `provider/model` value, or an ordered list of values, when also setting a subagent `allowedModels` allowlist.
 </ParamField>
 
 <Warning>
-`dreaming.model` requires `plugins.entries.memory-core.subagent.allowModelOverride: true`. To restrict it, also set `plugins.entries.memory-core.subagent.allowedModels`. Trust or allowlist failures stay visible instead of falling back silently; the retry only covers model-unavailable errors.
+`dreaming.model` requires `plugins.entries.memory-core.subagent.allowModelOverride: true`. To restrict it, also set `plugins.entries.memory-core.subagent.allowedModels`. Trust or allowlist failures stay visible instead of falling back silently; list retries only cover model-unavailable errors.
 </Warning>
 
 <Note>

@@ -473,7 +473,7 @@ Heartbeats run full agent turns. Shorter intervals burn more tokens. To reduce c
 
 - Use `isolatedSession: true` to avoid sending full conversation history (~100K tokens down to ~2-5K per run).
 - Use `lightContext: true` to limit bootstrap files to just `HEARTBEAT.md`.
-- Set a cheaper `model` (e.g. `ollama/llama3.2:1b`).
+- Set a cheaper `model` (e.g. `ollama/llama3.2:1b`) or an ordered model list for heartbeat-only failover.
 - Keep `HEARTBEAT.md` small.
 - Use `target: "none"` if you only want internal state updates.
 

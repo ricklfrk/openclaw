@@ -61,6 +61,9 @@ export function resolvePrimaryStringValue(value: unknown): string | undefined {
   if (typeof value === "string") {
     return normalizeOptionalString(value);
   }
+  if (Array.isArray(value)) {
+    return normalizeOptionalString(value[0]);
+  }
   if (!value || typeof value !== "object") {
     return undefined;
   }

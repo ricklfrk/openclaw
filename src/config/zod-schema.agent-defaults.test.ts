@@ -47,6 +47,27 @@ describe("agent defaults schema", () => {
     ).toThrow();
   });
 
+  it("accepts ordered model-list shorthand", () => {
+    expect(() =>
+      AgentDefaultsSchema.parse({
+        model: ["anthropic/claude-sonnet-4-6", "anthropic-proxy/claude-sonnet-4-6"],
+        heartbeat: {
+          model: ["openai/gpt-5.4-mini", "openai/gpt-5.4-nano"],
+        },
+      }),
+    ).not.toThrow();
+
+    expect(() =>
+      AgentEntrySchema.parse({
+        id: "ops",
+        model: ["anthropic/claude-sonnet-4-6", "anthropic-proxy/claude-sonnet-4-6"],
+        subagents: {
+          model: ["openai/gpt-5.4-mini", "openai/gpt-5.4-nano"],
+        },
+      }),
+    ).not.toThrow();
+  });
+
   it("accepts mediaGenerationAutoProviderFallback", () => {
     expect(() =>
       AgentDefaultsSchema.parse({

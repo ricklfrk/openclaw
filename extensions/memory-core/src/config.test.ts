@@ -49,4 +49,30 @@ describe("memory-core manifest config schema", () => {
 
     expect(result.ok).toBe(true);
   });
+
+  it("accepts ordered dreaming model lists", () => {
+    const result = validateJsonSchemaValue({
+      schema: manifest.configSchema,
+      cacheKey: "memory-core.manifest.dreaming-model-list",
+      value: {
+        dreaming: {
+          model: ["anthropic/claude-sonnet-4-6", "anthropic-proxy/claude-sonnet-4-6"],
+          execution: {
+            defaults: {
+              model: ["openai/gpt-5.4-mini", "openai/gpt-5.4-nano"],
+            },
+          },
+          phases: {
+            rem: {
+              execution: {
+                model: ["xai/grok-4.1-fast", "openai/gpt-5.4-mini"],
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(result.ok).toBe(true);
+  });
 });

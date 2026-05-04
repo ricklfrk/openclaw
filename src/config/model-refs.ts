@@ -29,6 +29,12 @@ export function collectConfiguredModelRefs(
       pushModelRef(path, value);
       return;
     }
+    if (Array.isArray(value)) {
+      for (const [index, entry] of value.entries()) {
+        pushModelRef(`${path}.${index}`, entry);
+      }
+      return;
+    }
     if (!isRecord(value)) {
       return;
     }
@@ -46,7 +52,7 @@ export function collectConfiguredModelRefs(
     for (const key of AGENT_MODEL_CONFIG_KEYS) {
       collectModelConfig(`${path}.${key}`, agent[key]);
     }
-    pushModelRef(
+    collectModelConfig(
       `${path}.heartbeat.model`,
       isRecord(agent.heartbeat) ? agent.heartbeat.model : undefined,
     );

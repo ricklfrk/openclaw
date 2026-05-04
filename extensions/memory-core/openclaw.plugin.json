@@ -24,7 +24,7 @@
     "dreaming.model": {
       "label": "Dreaming Model",
       "placeholder": "anthropic/claude-sonnet-4-6",
-      "help": "Optional provider/model override for Dream Diary narrative subagent runs. Requires plugins.entries.memory-core.subagent.allowModelOverride."
+      "help": "Optional provider/model override or ordered fallback list for Dream Diary narrative subagent runs. Requires plugins.entries.memory-core.subagent.allowModelOverride."
     }
   },
   "configSchema": {
@@ -42,7 +42,13 @@
             "type": "string"
           },
           "model": {
-            "type": "string"
+            "anyOf": [
+              { "type": "string" },
+              {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            ]
           },
           "timezone": {
             "type": "string"
@@ -72,7 +78,13 @@
                 "additionalProperties": false,
                 "properties": {
                   "model": {
-                    "type": "string"
+                    "anyOf": [
+                      { "type": "string" },
+                      {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      }
+                    ]
                   }
                 }
               }
@@ -107,7 +119,13 @@
                     "additionalProperties": false,
                     "properties": {
                       "model": {
-                        "type": "string"
+                        "anyOf": [
+                          { "type": "string" },
+                          {
+                            "type": "array",
+                            "items": { "type": "string" }
+                          }
+                        ]
                       }
                     }
                   }
@@ -150,7 +168,13 @@
                     "additionalProperties": false,
                     "properties": {
                       "model": {
-                        "type": "string"
+                        "anyOf": [
+                          { "type": "string" },
+                          {
+                            "type": "array",
+                            "items": { "type": "string" }
+                          }
+                        ]
                       }
                     }
                   }
@@ -181,7 +205,13 @@
                     "additionalProperties": false,
                     "properties": {
                       "model": {
-                        "type": "string"
+                        "anyOf": [
+                          { "type": "string" },
+                          {
+                            "type": "array",
+                            "items": { "type": "string" }
+                          }
+                        ]
                       }
                     }
                   }

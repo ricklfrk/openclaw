@@ -44,6 +44,8 @@ type SubagentSurface = {
   deleteSession: (params: { sessionKey: string }) => Promise<void>;
 };
 
+type DreamingNarrativeModelConfig = string | string[];
+
 export type NarrativePhaseData = {
   phase: "light" | "deep" | "rem";
   /** Short memory snippets the phase processed. */
@@ -59,6 +61,23 @@ type Logger = {
   warn: (message: string) => void;
   error: (message: string) => void;
 };
+
+function normalizeNarrativeModelList(model: DreamingNarrativeModelConfig | undefined): string[] {
+  if (typeof model === "string") {
+    const trimmed = model.trim();
+    return trimmed ? [trimmed] : [];
+  }
+  if (!Array.isArray(model)) {
+    return [];
+  }
+  return model.flatMap((entry) => {
+    if (typeof entry !== "string") {
+      return [];
+    }
+    const trimmed = entry.trim();
+    return trimmed ? [trimmed] : [];
+  });
+}
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -881,7 +900,7 @@ export async function generateAndAppendDreamNarrative(params: {
   data: NarrativePhaseData;
   nowMs?: number;
   timezone?: string;
-  model?: string;
+  model?: DreamingNarrativeModelConfig;
   logger: Logger;
 }): Promise<void> {
   const nowMs = Number.isFinite(params.nowMs) ? (params.nowMs as number) : Date.now();
@@ -899,9 +918,15 @@ export async function generateAndAppendDreamNarrative(params: {
   const attempts: Array<{ sessionKey: string; runId: string | null }> = [];
   let successfulSessionKey: string | null = null;
   try {
-    const attemptModels = params.model ? [params.model, undefined] : [undefined];
+    const configuredModels = normalizeNarrativeModelList(params.model);
+    const attemptModels =
+      configuredModels.length > 0 ? [...configuredModels, undefined] : [undefined];
 
     for (const [attemptIndex, attemptModel] of attemptModels.entries()) {
+      const nextAttemptModel = attemptModels[attemptIndex + 1];
+      const retryTarget = nextAttemptModel
+        ? `configured model "${nextAttemptModel}"`
+        : "the session default";
       const attemptSessionKey = buildNarrativeAttemptSessionKey(sessionKey, attemptIndex);
       const attempt = { sessionKey: attemptSessionKey, runId: null as string | null };
       attempts.push(attempt);
@@ -942,7 +967,7 @@ export async function generateAndAppendDreamNarrative(params: {
             `memory-core: narrative generation ended with ${formatNarrativeTerminalStatus({
               status: result.status,
               error: result.error,
-            })} for ${params.data.phase} phase using configured model "${attemptModel}"; retrying with the session default.`,
+            })} for ${params.data.phase} phase using configured model "${attemptModel}"; retrying with ${retryTarget}.`,
           );
           continue;
         }
@@ -957,7 +982,7 @@ export async function generateAndAppendDreamNarrative(params: {
       } catch (err) {
         if (attemptModel && isConfiguredModelUnavailableNarrativeError(formatErrorMessage(err))) {
           params.logger.warn(
-            `memory-core: narrative generation could not start with configured model "${attemptModel}" for ${params.data.phase} phase; retrying with the session default (${formatErrorMessage(err)}).`,
+            `memory-core: narrative generation could not start with configured model "${attemptModel}" for ${params.data.phase} phase; retrying with ${retryTarget} (${formatErrorMessage(err)}).`,
           );
           continue;
         }

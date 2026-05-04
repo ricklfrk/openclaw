@@ -54,6 +54,7 @@ import {
 } from "../commitments/store.js";
 import type { CommitmentRecord } from "../commitments/types.js";
 import { getRuntimeConfig } from "../config/config.js";
+import { normalizeModelListValues } from "../config/model-input.js";
 import {
   canonicalizeMainSessionAlias,
   resolveAgentMainSessionKey,
@@ -1636,7 +1637,11 @@ export async function runHeartbeatOnce(opts: {
 
   try {
     await heartbeatTyping?.onReplyStart();
-    const heartbeatModelOverride = normalizeOptionalString(heartbeat?.model);
+    const heartbeatModelOverrideModels = normalizeModelListValues(heartbeat?.model);
+    const heartbeatModelOverride =
+      heartbeatModelOverrideModels.length === 1
+        ? heartbeatModelOverrideModels[0]
+        : heartbeatModelOverrideModels;
     const suppressToolErrorWarnings = heartbeat?.suppressToolErrorWarnings === true;
     const timeoutOverrideSeconds =
       typeof heartbeat?.timeoutSeconds === "number" ? heartbeat.timeoutSeconds : undefined;
@@ -1644,7 +1649,7 @@ export async function runHeartbeatOnce(opts: {
       heartbeat?.lightContext === true ? "lightweight" : undefined;
     const replyOpts = {
       isHeartbeat: true,
-      ...(heartbeatModelOverride ? { heartbeatModelOverride } : {}),
+      ...(heartbeatModelOverrideModels.length > 0 ? { heartbeatModelOverride } : {}),
       suppressToolErrorWarnings,
       ...(usesHeartbeatResponseTool ? { enableHeartbeatTool: true, forceHeartbeatTool: true } : {}),
       ...(usesHeartbeatResponseTool

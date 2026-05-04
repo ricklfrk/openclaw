@@ -1816,6 +1816,15 @@ describe("normalizeModelSelection", () => {
     );
   });
 
+  it("extracts primary from ordered model lists", () => {
+    expect(
+      normalizeModelSelection([
+        " anthropic/claude-sonnet-4-6 ",
+        "anthropic-proxy/claude-sonnet-4-6",
+      ]),
+    ).toBe("anthropic/claude-sonnet-4-6");
+  });
+
   it("returns undefined for object without primary", () => {
     expect(normalizeModelSelection({ fallbacks: ["a"] })).toBeUndefined();
     expect(normalizeModelSelection({})).toBeUndefined();

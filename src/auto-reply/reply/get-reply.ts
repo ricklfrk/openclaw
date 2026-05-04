@@ -10,6 +10,7 @@ import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../../agents/workspace.js";
 import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
 import { type OpenClawConfig, getRuntimeConfig } from "../../config/config.js";
+import { normalizeModelListValues } from "../../config/model-input.js";
 import { logVerbose } from "../../globals.js";
 import { measureDiagnosticsTimelineSpan } from "../../infra/diagnostics-timeline.js";
 import { formatErrorMessage } from "../../infra/errors.js";
@@ -233,10 +234,12 @@ export async function getReplyFromConfig(
   if (opts?.isHeartbeat && !opts?.heartbeatUsePrimaryModel) {
     // Prefer the resolved per-agent heartbeat model passed from the heartbeat runner,
     // fall back to the global defaults heartbeat model for backward compatibility.
-    const heartbeatRaw =
-      normalizeOptionalString(opts.heartbeatModelOverride) ??
-      normalizeOptionalString(agentCfg?.heartbeat?.model) ??
-      "";
+    const heartbeatOverrideModels = normalizeModelListValues(opts.heartbeatModelOverride);
+    const heartbeatModels =
+      heartbeatOverrideModels.length > 0
+        ? heartbeatOverrideModels
+        : normalizeModelListValues(agentCfg?.heartbeat?.model);
+    const heartbeatRaw = heartbeatModels[0] ?? "";
     const heartbeatRef = heartbeatRaw
       ? resolveModelRefFromString({
           raw: heartbeatRaw,

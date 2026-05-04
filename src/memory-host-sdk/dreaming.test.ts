@@ -85,6 +85,40 @@ describe("memory dreaming host helpers", () => {
     expect(resolved.phases.rem.execution.model).toBe("xai/grok-4.1-fast");
   });
 
+  it("preserves ordered dreaming model lists", () => {
+    const resolved = resolveMemoryDreamingConfig({
+      pluginConfig: {
+        dreaming: {
+          model: [" anthropic/claude-sonnet-4-6 ", "", "anthropic-proxy/claude-sonnet-4-6"],
+          phases: {
+            rem: {
+              execution: {
+                model: ["openai/gpt-5.4-mini", "openai/gpt-5.4-nano"],
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(resolved.execution.defaults.model).toEqual([
+      "anthropic/claude-sonnet-4-6",
+      "anthropic-proxy/claude-sonnet-4-6",
+    ]);
+    expect(resolved.phases.light.execution.model).toEqual([
+      "anthropic/claude-sonnet-4-6",
+      "anthropic-proxy/claude-sonnet-4-6",
+    ]);
+    expect(resolved.phases.deep.execution.model).toEqual([
+      "anthropic/claude-sonnet-4-6",
+      "anthropic-proxy/claude-sonnet-4-6",
+    ]);
+    expect(resolved.phases.rem.execution.model).toEqual([
+      "openai/gpt-5.4-mini",
+      "openai/gpt-5.4-nano",
+    ]);
+  });
+
   it("falls back to cfg timezone and deep defaults", () => {
     const cfg = {
       agents: {

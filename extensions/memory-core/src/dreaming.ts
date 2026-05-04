@@ -108,7 +108,9 @@ type CronServiceLike = {
   remove: (id: string) => Promise<{ removed?: boolean }>;
 };
 
-type ShortTermPromotionDreamingConfig = {
+type DreamingNarrativeModelConfig = string | string[];
+
+export type ShortTermPromotionDreamingConfig = {
   enabled: boolean;
   cron: string;
   timezone?: string;
@@ -124,7 +126,7 @@ type ShortTermPromotionDreamingConfig = {
     separateReports: boolean;
   };
   execution?: {
-    model?: string;
+    model?: DreamingNarrativeModelConfig;
   };
 };
 
@@ -739,6 +741,7 @@ export function registerShortTermPromotionDreaming(api: OpenClawPluginApi): void
       config.verboseLogging ? "verbose" : "quiet",
       config.storage?.mode ?? "",
       config.storage?.separateReports ? "separate" : "inline",
+      JSON.stringify(config.execution?.model ?? ""),
     ].join("|");
 
   const reconcileManagedDreamingCron = async (params: {

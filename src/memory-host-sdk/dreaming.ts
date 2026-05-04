@@ -60,6 +60,7 @@ export type MemoryDreamingSpeed = "fast" | "balanced" | "slow";
 export type MemoryDreamingThinking = "low" | "medium" | "high";
 export type MemoryDreamingBudget = "cheap" | "medium" | "expensive";
 export type MemoryDreamingStorageMode = "inline" | "separate" | "both";
+export type MemoryDreamingModelConfig = string | string[];
 
 export type MemoryLightDreamingSource = "daily" | "sessions" | "recall";
 export type MemoryDeepDreamingSource = "daily" | "memory" | "sessions" | "logs" | "recall";
@@ -69,7 +70,7 @@ export type MemoryDreamingExecutionConfig = {
   speed: MemoryDreamingSpeed;
   thinking: MemoryDreamingThinking;
   budget: MemoryDreamingBudget;
-  model?: string;
+  model?: MemoryDreamingModelConfig;
   maxOutputTokens?: number;
   temperature?: number;
   timeoutMs?: number;
@@ -171,6 +172,21 @@ function normalizeTrimmedString(value: unknown): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeMemoryDreamingModelConfig(value: unknown): MemoryDreamingModelConfig | undefined {
+  const single = normalizeTrimmedString(value);
+  if (single) {
+    return single;
+  }
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const models = value.flatMap((entry) => {
+    const normalized = normalizeTrimmedString(entry);
+    return normalized ? [normalized] : [];
+  });
+  return models.length > 0 ? models : undefined;
 }
 
 function normalizeNonNegativeInt(value: unknown, fallback: number): number {
@@ -306,7 +322,7 @@ function resolveExecutionConfig(
     typeof temperatureRaw === "number" && Number.isFinite(temperatureRaw) && temperatureRaw >= 0
       ? Math.min(2, temperatureRaw)
       : undefined;
-  const model = normalizeTrimmedString(record?.model) ?? fallback.model;
+  const model = normalizeMemoryDreamingModelConfig(record?.model) ?? fallback.model;
 
   return {
     speed: normalizeSpeed(record?.speed) ?? fallback.speed,
@@ -373,7 +389,7 @@ export function resolveMemoryDreamingConfig(params: {
   const storage = asNullableRecord(dreaming?.storage);
   const execution = asNullableRecord(dreaming?.execution);
   const phases = asNullableRecord(dreaming?.phases);
-  const topLevelModel = normalizeTrimmedString(dreaming?.model);
+  const topLevelModel = normalizeMemoryDreamingModelConfig(dreaming?.model);
 
   const defaultExecution = resolveExecutionConfig(execution?.defaults, {
     speed: DEFAULT_MEMORY_DREAMING_SPEED,

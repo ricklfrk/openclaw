@@ -38,6 +38,7 @@ import { sanitizeUserFacingText } from "../../agents/pi-embedded-helpers/sanitiz
 import { isLikelyExecutionAckPrompt } from "../../agents/pi-embedded-runner/run/incomplete-turn.js";
 import { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
 import { buildAgentRuntimeOutcomePlan } from "../../agents/runtime-plan/build.js";
+import { normalizeModelListValues } from "../../config/model-input.js";
 import {
   resolveGroupSessionKey,
   resolveSessionTranscriptPath,
@@ -613,20 +614,20 @@ type ModelRefLike = {
   model: string;
 };
 
-function resolveAgentHeartbeatModelRaw(params: {
+function resolveAgentHeartbeatModels(params: {
   cfg: FollowupRun["run"]["config"];
   agentId?: string;
-}): string | undefined {
-  const defaultModel = normalizeOptionalString(params.cfg.agents?.defaults?.heartbeat?.model);
+}): string[] {
+  const defaultModels = normalizeModelListValues(params.cfg.agents?.defaults?.heartbeat?.model);
   const agentId = normalizeLowercaseStringOrEmpty(params.agentId);
-  const agentModel = agentId
-    ? normalizeOptionalString(
+  const agentModels = agentId
+    ? normalizeModelListValues(
         params.cfg.agents?.list?.find(
           (entry) => normalizeLowercaseStringOrEmpty(entry?.id) === agentId,
         )?.heartbeat?.model,
       )
-    : undefined;
-  return agentModel ?? defaultModel;
+    : [];
+  return agentModels.length > 0 ? agentModels : defaultModels;
 }
 
 function normalizeModelRefForCompare(ref: ModelRefLike | undefined) {
@@ -704,18 +705,20 @@ function resolveHeartbeatBleedHint(params: {
     return undefined;
   }
 
-  const heartbeatModelRaw = resolveAgentHeartbeatModelRaw({
+  const heartbeatRefs = resolveAgentHeartbeatModels({
     cfg: params.cfg,
     agentId: params.agentId,
-  });
-  const heartbeatRef = heartbeatModelRaw
-    ? resolveModelRefFromString({
-        cfg: params.cfg,
-        raw: heartbeatModelRaw,
-        defaultProvider: primaryProvider,
-      })?.ref
-    : undefined;
-  if (!modelRefsEqual(runtimeRef, heartbeatRef)) {
+  })
+    .map(
+      (raw) =>
+        resolveModelRefFromString({
+          cfg: params.cfg,
+          raw,
+          defaultProvider: primaryProvider,
+        })?.ref,
+    )
+    .filter((ref): ref is ModelRefLike => Boolean(ref));
+  if (!heartbeatRefs.some((heartbeatRef) => modelRefsEqual(runtimeRef, heartbeatRef))) {
     return undefined;
   }
 
@@ -1363,17 +1366,31 @@ export async function runAgentTurnWithFallback(params: {
       const runLane = CommandLane.Main;
       let fallbackAttemptIndex = 0;
       const baseFallbackOpts = resolveModelFallbackOptions(effectiveRun, runtimeConfig);
-      // Heartbeat runs use a dedicated model (e.g. gcli); on failure, fall back
-      // to primary -> normal fallbacks, same chain as a regular user turn.
+      // Heartbeat runs may use a dedicated model list; on failure, try the rest
+      // of that list before falling back to primary -> normal fallbacks.
       const heartbeatFallbacksOverride = params.isHeartbeat
         ? (() => {
+            const explicitDedicatedModels = normalizeModelListValues(
+              params.opts?.heartbeatModelOverride,
+            );
+            const dedicatedModels =
+              explicitDedicatedModels.length > 0
+                ? explicitDedicatedModels
+                : resolveAgentHeartbeatModels({
+                    cfg: effectiveRun.config,
+                    agentId: effectiveRun.agentId,
+                  });
             const primary = resolveDefaultModelForAgent({
               cfg: effectiveRun.config,
               agentId: effectiveRun.agentId,
             });
             const primaryRef = `${primary.provider}/${primary.model}`;
             const normalFallbacks = baseFallbackOpts.fallbacksOverride ?? [];
-            return [primaryRef, ...normalFallbacks.filter((fallback) => fallback !== primaryRef)];
+            return [
+              ...dedicatedModels.slice(1),
+              primaryRef,
+              ...normalFallbacks.filter((fallback) => fallback !== primaryRef),
+            ];
           })()
         : undefined;
       const fallbackResult = await runWithModelFallback<EmbeddedAgentRunResult>({

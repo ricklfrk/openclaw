@@ -605,7 +605,7 @@ For conceptual behavior and slash commands, see [Dreaming](/concepts/dreaming).
           dreaming: {
             enabled: true,
             frequency: "0 3 * * *",
-            model: "anthropic/claude-sonnet-4-6",
+            model: ["anthropic/claude-sonnet-4-6", "anthropic-proxy/claude-sonnet-4-6"],
           },
         },
       },
@@ -617,8 +617,8 @@ For conceptual behavior and slash commands, see [Dreaming](/concepts/dreaming).
 <Note>
 - Dreaming writes machine state to `memory/.dreams/`.
 - Dreaming writes human-readable narrative output to `DREAMS.md` (or existing `dreams.md`).
-- `dreaming.model` uses the existing plugin subagent trust gate; set `plugins.entries.memory-core.subagent.allowModelOverride: true` before enabling it.
-- Dream Diary retries once with the session default model when the configured model is unavailable. Trust or allowlist failures are logged and are not silently retried.
+- `dreaming.model` accepts a string or ordered model list and uses the existing plugin subagent trust gate; set `plugins.entries.memory-core.subagent.allowModelOverride: true` before enabling it.
+- Dream Diary tries configured model-list entries in order, then retries once with the session default model when configured models are unavailable. Trust or allowlist failures are logged and are not silently retried.
 - The light/deep/REM phase policy and thresholds are internal behavior, not user-facing config.
 
 </Note>

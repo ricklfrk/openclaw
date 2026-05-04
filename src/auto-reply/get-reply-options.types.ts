@@ -1,4 +1,5 @@
 import type { ImageContent } from "@mariozechner/pi-ai";
+import type { AgentModelConfig } from "../config/types.agents-shared.js";
 import type { PromptImageOrderEntry } from "../media/prompt-image-order.js";
 import type { ReplyPayload } from "./reply-payload.js";
 import type { TypingController } from "./reply/typing.js";
@@ -51,8 +52,8 @@ export type GetReplyOptions = {
   typingPolicy?: TypingPolicy;
   /** Force-disable typing indicators for this run (system/internal/cross-channel routes). */
   suppressTyping?: boolean;
-  /** Resolved heartbeat model override (provider/model string from merged per-agent config). */
-  heartbeatModelOverride?: string;
+  /** Resolved heartbeat model override. Array form is primary followed by fallback models. */
+  heartbeatModelOverride?: AgentModelConfig;
   /** When true, use the agent's primary model for heartbeat instead of a dedicated heartbeat model. */
   heartbeatUsePrimaryModel?: boolean;
   /** Controls bootstrap workspace context injection (default: full). */

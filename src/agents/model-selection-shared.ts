@@ -892,6 +892,10 @@ export function normalizeModelSelection(value: unknown): string | undefined {
     const trimmed = value.trim();
     return trimmed || undefined;
   }
+  if (Array.isArray(value)) {
+    const primary = value[0];
+    return typeof primary === "string" && primary.trim() ? primary.trim() : undefined;
+  }
   if (!value || typeof value !== "object") {
     return undefined;
   }
