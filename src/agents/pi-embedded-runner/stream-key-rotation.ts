@@ -87,11 +87,10 @@ function isRetriableErrorEvent(event: AssistantMessageEvent): boolean {
   );
 }
 
-function buildRateLimitExhaustedEvent(model: {
-  api?: string;
-  provider?: string;
-  id?: string;
-}): AssistantMessageEvent {
+function buildExhaustedEvent(
+  model: { api?: string; provider?: string; id?: string },
+  errorMessage: string,
+): AssistantMessageEvent {
   return {
     type: "error",
     reason: "error",
@@ -110,11 +109,39 @@ function buildRateLimitExhaustedEvent(model: {
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       },
       stopReason: "error" as const,
-      errorMessage:
-        "All API key profiles exhausted due to rate limiting (429). Falling back to next model.",
+      errorMessage,
       timestamp: Date.now(),
     },
   } as AssistantMessageEvent;
+}
+
+function buildRateLimitExhaustedEvent(model: {
+  api?: string;
+  provider?: string;
+  id?: string;
+}): AssistantMessageEvent {
+  return buildExhaustedEvent(
+    model,
+    "All API key profiles exhausted due to rate limiting (429). Falling back to next model.",
+  );
+}
+
+/**
+ * Push when every profile failed because of provider safety / content-filter
+ * blocks (e.g. Gemini PROHIBITED_CONTENT). The errorMessage retains the
+ * "content filter blocked" substring so upstream classifiers
+ * (`isContentFilterBlockedMessage` in agent-runner-execution) can render a
+ * filter-specific user message instead of the generic rate-limit copy.
+ */
+function buildContentFilterExhaustedEvent(model: {
+  api?: string;
+  provider?: string;
+  id?: string;
+}): AssistantMessageEvent {
+  return buildExhaustedEvent(
+    model,
+    "All API key profiles exhausted due to provider content filter blocked. Falling back to next model.",
+  );
 }
 
 export type WrapStreamFnWithKeyRotationParams = {
@@ -183,6 +210,10 @@ export function wrapStreamFnWithKeyRotation(params: WrapStreamFnWithKeyRotationP
       }
 
       let triedCount = 0;
+      // Track the most recent profile failure kind so the final "all exhausted"
+      // event can name the actual blocker (rate-limit vs content filter) instead
+      // of always claiming 429.
+      let lastFailureKind: "rate_limit" | "content_filter" = "rate_limit";
       for (const candidate of toTryOrder) {
         let apiKey: string | undefined;
         try {
@@ -259,6 +290,7 @@ export function wrapStreamFnWithKeyRotation(params: WrapStreamFnWithKeyRotationP
                 reason: "empty_response",
                 agentDir,
               });
+              lastFailureKind = "content_filter";
               advanceProfile = true;
               break;
             }
@@ -279,6 +311,7 @@ export function wrapStreamFnWithKeyRotation(params: WrapStreamFnWithKeyRotationP
                 reason: "rate_limit",
                 agentDir,
               });
+              lastFailureKind = "rate_limit";
               advanceProfile = true;
               break;
             }
@@ -314,6 +347,7 @@ export function wrapStreamFnWithKeyRotation(params: WrapStreamFnWithKeyRotationP
                 reason: "empty_response",
                 agentDir,
               });
+              lastFailureKind = "content_filter";
               advanceProfile = true;
               break;
             }
@@ -330,6 +364,7 @@ export function wrapStreamFnWithKeyRotation(params: WrapStreamFnWithKeyRotationP
                 reason: "rate_limit",
                 agentDir,
               });
+              lastFailureKind = "rate_limit";
               advanceProfile = true;
               break;
             }
@@ -370,19 +405,26 @@ export function wrapStreamFnWithKeyRotation(params: WrapStreamFnWithKeyRotationP
         }
       }
 
-      // Only after we actually tried every candidate (available + in-cooldown) and all 429.
+      // Only after we actually tried every candidate (available + in-cooldown).
+      // Pick the exhausted-event flavor that matches the most recent profile
+      // failure so the user-facing message names the actual blocker (rate-limit
+      // vs provider safety filter) instead of always claiming 429.
       rotationState.allKeysExhausted = true;
       const skipCount = rotationState.skipProfiles.size;
       const skipSuffix = skipCount > 0 ? ` (${skipCount} skipped for empty response)` : "";
       log.warn(
-        `[key-rotation] all ${toTryOrder.length} profile keys exhausted due to rate limiting after ${triedCount} attempts${skipSuffix}`,
+        `[key-rotation] all ${toTryOrder.length} profile keys exhausted (lastFailureKind=${lastFailureKind}) after ${triedCount} attempts${skipSuffix}`,
       );
 
       rotationState.rotationIndex =
         (profileCandidates.indexOf(toTryOrder[toTryOrder.length - 1]) + 1) %
         profileCandidates.length;
 
-      outputStream.push(buildRateLimitExhaustedEvent(model));
+      const exhaustedEvent =
+        lastFailureKind === "content_filter"
+          ? buildContentFilterExhaustedEvent(model)
+          : buildRateLimitExhaustedEvent(model);
+      outputStream.push(exhaustedEvent);
       outputStream.end();
     })();
 

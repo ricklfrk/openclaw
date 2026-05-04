@@ -280,6 +280,41 @@ describe("wrapStreamFnWithKeyRotation", () => {
     expect(state.allKeysExhausted).toBe(true);
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe("error");
+    // The exhausted event must name the actual blocker (content filter), not
+    // claim 429 — otherwise the agent-runner classifier emits a generic
+    // "rate-limited" message for what is really a provider safety block.
+    const errorMsg = (events[0] as { error?: { errorMessage?: string } }).error?.errorMessage ?? "";
+    expect(errorMsg).toMatch(/content filter blocked/i);
+    expect(errorMsg).not.toMatch(/rate limiting/i);
+  });
+
+  it("emits a rate-limit-flavored exhausted event when the last failure was 429", async () => {
+    const { streamFn } = createMockStreamFn([
+      [makeRateLimitErrorEvent()],
+      [makeRateLimitErrorEvent()],
+      [makeRateLimitErrorEvent()],
+    ]);
+    const state = createKeyRotationState();
+    const store = makeAuthStore(["p1", "p2", "p3"]);
+
+    const wrapped = wrapStreamFnWithKeyRotation({
+      streamFn,
+      profileCandidates: ["p1", "p2", "p3"],
+      resolveApiKey: async (id) => `key-${id}`,
+      authStore: store,
+      rotationState: state,
+    });
+
+    const events = await collectEvents(
+      wrapped(geminiModel, { systemPrompt: "", messages: [], tools: [] }, {}),
+    );
+
+    expect(state.allKeysExhausted).toBe(true);
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("error");
+    const errorMsg = (events[0] as { error?: { errorMessage?: string } }).error?.errorMessage ?? "";
+    expect(errorMsg).toMatch(/rate limiting/i);
+    expect(errorMsg).not.toMatch(/content filter blocked/i);
   });
 
   it("retries same key on thrown content-filter block (single profile)", async () => {

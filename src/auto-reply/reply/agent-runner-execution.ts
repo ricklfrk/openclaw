@@ -385,6 +385,35 @@ function isPureBillingSummary(err: unknown): boolean {
   );
 }
 
+/**
+ * User-visible copy when the provider's safety filter rejected the request
+ * (Gemini PROHIBITED_CONTENT, OpenAI content_filter, etc.). Distinct from the
+ * generic rate-limit message because retrying shortly will not unblock the
+ * call — the user must edit the prompt or switch to a less-restricted route.
+ */
+const CONTENT_FILTER_BLOCKED_MESSAGE = "⚠️ 內容被模型安全過濾擋下,試 /retry 或換 prompt。";
+
+/**
+ * Detect provider safety / content-filter blocks on a raw error message.
+ * Matches the shapes emitted by `google-nonstream.ts`
+ * (`Google content filter blocked (...)`), the key-rotation exhaustion event
+ * (`provider content filter blocked`), Gemini server codes (`PROHIBITED_CONTENT`),
+ * and OpenAI-style `content_filter` finish reasons.
+ */
+function isContentFilterBlockedMessage(message: string): boolean {
+  return /content filter blocked|prohibited_content|content_filter/i.test(message);
+}
+
+function isPureContentFilterSummary(err: unknown): boolean {
+  if (!isFallbackSummaryError(err)) {
+    return false;
+  }
+  if (err.attempts.length === 0) {
+    return false;
+  }
+  return err.attempts.every((attempt) => isContentFilterBlockedMessage(attempt.error));
+}
+
 function isToolResultTurnMismatchError(message: string): boolean {
   const lower = normalizeLowercaseStringOrEmpty(message);
   return (
@@ -2193,11 +2222,19 @@ export async function runAgentTurnWithFallback(params: {
       const isPureTransientSummary = isFallbackSummary
         ? isPureTransientRateLimitSummary(err)
         : false;
-      const isRateLimit = isFallbackSummary
-        ? isPureTransientSummary
-        : isRateLimitErrorMessage(message);
+      // Provider safety / content-filter blocks (Gemini PROHIBITED_CONTENT,
+      // OpenAI content_filter, …) reach here either as a single error message
+      // or as a FallbackSummaryError whose every attempt was a filter block —
+      // in which case we want to short-circuit the generic rate-limit copy and
+      // tell the user the prompt itself was rejected.
+      const isContentFilter = isFallbackSummary
+        ? isPureContentFilterSummary(err)
+        : isContentFilterBlockedMessage(message);
+      const isRateLimit =
+        !isContentFilter &&
+        (isFallbackSummary ? isPureTransientSummary : isRateLimitErrorMessage(message));
       const rateLimitOrOverloadedCopy =
-        !isFallbackSummary || isPureTransientSummary
+        !isContentFilter && (!isFallbackSummary || isPureTransientSummary)
           ? formatRateLimitOrOverloadedErrorCopy(message)
           : undefined;
       const safeMessage = isTransientHttp
@@ -2206,6 +2243,7 @@ export async function runAgentTurnWithFallback(params: {
       const trimmedMessage = safeMessage.replace(/\.\s*$/, "");
       const externalRunFailureReply =
         !isBilling &&
+        !isContentFilter &&
         !(isRateLimit && !isOverloadedErrorMessage(message)) &&
         !rateLimitOrOverloadedCopy &&
         !isContextOverflow &&
@@ -2217,17 +2255,19 @@ export async function runAgentTurnWithFallback(params: {
           : undefined;
       const fallbackText = isBilling
         ? BILLING_ERROR_USER_MESSAGE
-        : isRateLimit && !isOverloadedErrorMessage(message)
-          ? buildRateLimitCooldownMessage(err)
-          : rateLimitOrOverloadedCopy
-            ? rateLimitOrOverloadedCopy
-            : isContextOverflow
-              ? "⚠️ Context overflow — prompt too large for this model. Try a shorter message or a larger-context model."
-              : isRoleOrderingError
-                ? "⚠️ Message ordering conflict - please try again. If this persists, use /new to start a fresh session."
-                : shouldSurfaceToControlUi
-                  ? `⚠️ Agent failed before reply: ${trimmedMessage}.\nLogs: openclaw logs --follow`
-                  : (externalRunFailureReply?.text ?? GENERIC_EXTERNAL_RUN_FAILURE_TEXT);
+        : isContentFilter
+          ? CONTENT_FILTER_BLOCKED_MESSAGE
+          : isRateLimit && !isOverloadedErrorMessage(message)
+            ? buildRateLimitCooldownMessage(err)
+            : rateLimitOrOverloadedCopy
+              ? rateLimitOrOverloadedCopy
+              : isContextOverflow
+                ? "⚠️ Context overflow — prompt too large for this model. Try a shorter message or a larger-context model."
+                : isRoleOrderingError
+                  ? "⚠️ Message ordering conflict - please try again. If this persists, use /new to start a fresh session."
+                  : shouldSurfaceToControlUi
+                    ? `⚠️ Agent failed before reply: ${trimmedMessage}.\nLogs: openclaw logs --follow`
+                    : (externalRunFailureReply?.text ?? GENERIC_EXTERNAL_RUN_FAILURE_TEXT);
       const userVisibleFallbackText = resolveExternalRunFailureTextForConversation({
         text: fallbackText,
         sessionCtx: params.sessionCtx,

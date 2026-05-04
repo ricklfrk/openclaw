@@ -2351,6 +2351,106 @@ describe("runAgentTurnWithFallback", () => {
     }
   });
 
+  it("surfaces content-filter copy for pure provider safety-block fallback exhaustion", async () => {
+    state.runWithModelFallbackMock.mockRejectedValueOnce(
+      Object.assign(
+        new Error(
+          "All models failed (2): lab/gemini-3.1-pro: Google content filter blocked (finishReason=PROHIBITED_CONTENT) | lab/gemini-3.1-pro: Google content filter blocked (finishReason=STOP-empty, blockReason=OTHER)",
+        ),
+        {
+          name: "FallbackSummaryError",
+          attempts: [
+            {
+              provider: "lab",
+              model: "gemini-3.1-pro",
+              error: "Google content filter blocked (finishReason=PROHIBITED_CONTENT)",
+              reason: "empty_response",
+            },
+            {
+              provider: "lab",
+              model: "gemini-3.1-pro",
+              error: "Google content filter blocked (finishReason=STOP-empty, blockReason=OTHER)",
+              reason: "empty_response",
+            },
+          ],
+          soonestCooldownExpiry: null,
+        },
+      ),
+    );
+
+    const runAgentTurnWithFallback = await getRunAgentTurnWithFallback();
+    const result = await runAgentTurnWithFallback({
+      commandBody: "hello",
+      followupRun: createFollowupRun(),
+      sessionCtx: {
+        Provider: "whatsapp",
+        MessageSid: "msg",
+      } as unknown as TemplateContext,
+      opts: {},
+      typingSignals: createMockTypingSignaler(),
+      blockReplyPipeline: null,
+      blockStreamingEnabled: false,
+      resolvedBlockStreamingBreak: "message_end",
+      applyReplyToMode: (payload) => payload,
+      shouldEmitToolResult: () => true,
+      shouldEmitToolOutput: () => false,
+      pendingToolTasks: new Set(),
+      resetSessionAfterCompactionFailure: async () => false,
+      resetSessionAfterRoleOrderingConflict: async () => false,
+      isHeartbeat: false,
+      sessionKey: "main",
+      getActiveSessionEntry: () => undefined,
+      resolvedVerboseLevel: "off",
+    });
+
+    expect(result.kind).toBe("final");
+    if (result.kind === "final") {
+      // Content-filter blocks must not surface as "rate-limited" — the user
+      // needs to know the prompt itself was rejected and retrying right away
+      // (without changing the message) is unlikely to help.
+      expect(result.payload.text).toContain("內容被模型安全過濾擋下");
+      expect(result.payload.text).toContain("/retry");
+      expect(result.payload.text).not.toContain("rate-limited");
+      expect(result.payload.text).not.toContain("Rate-limited");
+    }
+  });
+
+  it("surfaces content-filter copy for a single-model content-filter error", async () => {
+    state.runWithModelFallbackMock.mockRejectedValueOnce(
+      new Error("Google content filter blocked (finishReason=PROHIBITED_CONTENT)"),
+    );
+
+    const runAgentTurnWithFallback = await getRunAgentTurnWithFallback();
+    const result = await runAgentTurnWithFallback({
+      commandBody: "hello",
+      followupRun: createFollowupRun(),
+      sessionCtx: {
+        Provider: "whatsapp",
+        MessageSid: "msg",
+      } as unknown as TemplateContext,
+      opts: {},
+      typingSignals: createMockTypingSignaler(),
+      blockReplyPipeline: null,
+      blockStreamingEnabled: false,
+      resolvedBlockStreamingBreak: "message_end",
+      applyReplyToMode: (payload) => payload,
+      shouldEmitToolResult: () => true,
+      shouldEmitToolOutput: () => false,
+      pendingToolTasks: new Set(),
+      resetSessionAfterCompactionFailure: async () => false,
+      resetSessionAfterRoleOrderingConflict: async () => false,
+      isHeartbeat: false,
+      sessionKey: "main",
+      getActiveSessionEntry: () => undefined,
+      resolvedVerboseLevel: "off",
+    });
+
+    expect(result.kind).toBe("final");
+    if (result.kind === "final") {
+      expect(result.payload.text).toContain("內容被模型安全過濾擋下");
+    }
+  });
+
   it("surfaces gateway restart text when fallback exhaustion wraps a drain error", async () => {
     const { replyOperation, failMock } = createMockReplyOperation();
     state.runWithModelFallbackMock.mockRejectedValueOnce(
