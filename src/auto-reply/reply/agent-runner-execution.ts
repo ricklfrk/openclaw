@@ -1664,7 +1664,7 @@ export async function runAgentTurnWithFallback(params: {
                   body: params.commandBody,
                   isFallbackRetry,
                   preserveBodyOnRetry:
-                    params.isHeartbeat === true && SYSTEM_EVENT_LINE_RE.test(params.commandBody),
+                    params.isHeartbeat && SYSTEM_EVENT_LINE_RE.test(params.commandBody),
                 }),
                 transcriptPrompt: params.transcriptCommandBody,
                 currentTurnContext: params.followupRun.currentTurnContext,

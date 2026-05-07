@@ -101,7 +101,9 @@ vi.mock("openclaw/plugin-sdk/agent-runtime", () => ({
     const primary =
       typeof configuredModel === "string"
         ? configuredModel.trim()
-        : (configuredModel?.primary?.trim() ?? "");
+        : Array.isArray(configuredModel)
+          ? (configuredModel[0]?.trim() ?? "")
+          : (configuredModel?.primary?.trim() ?? "");
     const slashIndex = primary.indexOf("/");
     if (slashIndex > 0 && slashIndex < primary.length - 1) {
       return {

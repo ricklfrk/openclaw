@@ -1,5 +1,6 @@
 import { listProfilesForProvider } from "../agents/auth-profiles.js";
 import { ensureAuthProfileStore } from "../agents/auth-profiles.js";
+import { DEFAULT_PROVIDER } from "../agents/defaults.js";
 import { describeFailoverError, isFailoverError } from "../agents/failover-error.js";
 import { resolveEnvApiKey } from "../agents/model-auth-env.js";
 import type { FallbackAttempt } from "../agents/model-fallback.types.js";
@@ -79,18 +80,18 @@ type ParsedSize = {
   area: number;
 };
 
-function resolveCurrentDefaultProviderId(cfg?: OpenClawConfig): string | undefined {
+function resolveCurrentDefaultProviderId(cfg?: OpenClawConfig): string {
   const configured = resolveAgentModelPrimaryValue(cfg?.agents?.defaults?.model);
   const trimmed = normalizeOptionalString(configured);
   if (!trimmed) {
-    return undefined;
+    return DEFAULT_PROVIDER;
   }
   const slash = trimmed.indexOf("/");
   if (slash <= 0) {
-    return undefined;
+    return DEFAULT_PROVIDER;
   }
   const provider = normalizeOptionalString(trimmed.slice(0, slash));
-  return provider;
+  return provider || DEFAULT_PROVIDER;
 }
 
 function isCapabilityProviderConfigured(params: {
@@ -149,10 +150,7 @@ function resolveAutoCapabilityFallbackRefs(params: {
   const providerIds = [...providerDefaults.keys()].toSorted();
   const matchesDefaultProvider = (providerId: string): boolean => {
     const entry = providerDefaults.get(providerId);
-    return Boolean(
-      defaultProvider &&
-      (providerId === defaultProvider || (entry?.aliases ?? []).includes(defaultProvider)),
-    );
+    return providerId === defaultProvider || (entry?.aliases ?? []).includes(defaultProvider);
   };
   const orderedProviders = [
     ...providerIds.filter(matchesDefaultProvider),

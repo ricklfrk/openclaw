@@ -186,7 +186,9 @@ async function runAnthropicSetupTokenNonInteractive(
     mode: "token",
   });
   const existingModelConfig =
-    withProfile.agents?.defaults?.model && typeof withProfile.agents.defaults.model === "object"
+    withProfile.agents?.defaults?.model &&
+    typeof withProfile.agents.defaults.model === "object" &&
+    !Array.isArray(withProfile.agents.defaults.model)
       ? withProfile.agents.defaults.model
       : {};
   return {

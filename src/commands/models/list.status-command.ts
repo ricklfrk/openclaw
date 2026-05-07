@@ -196,7 +196,8 @@ export async function modelsStatusCommand(
             defaults: {
               ...cfg.agents?.defaults,
               model: {
-                ...(typeof cfg.agents?.defaults?.model === "object"
+                ...(typeof cfg.agents?.defaults?.model === "object" &&
+                !Array.isArray(cfg.agents.defaults.model)
                   ? cfg.agents.defaults.model
                   : {}),
                 primary: agentModelPrimary,

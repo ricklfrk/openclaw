@@ -197,7 +197,11 @@ function resolveDefaultModelForAgentForTest(params: { cfg: OpenClawConfig }): {
 } {
   const modelConfig = params.cfg.agents?.defaults?.model;
   const rawModel =
-    typeof modelConfig === "string" ? modelConfig : (modelConfig?.primary ?? "openai/gpt-5.4");
+    typeof modelConfig === "string"
+      ? modelConfig
+      : Array.isArray(modelConfig)
+        ? (modelConfig[0] ?? "openai/gpt-5.4")
+        : (modelConfig?.primary ?? "openai/gpt-5.4");
   const parsed = parseModelRef(rawModel);
   const provider = normalizeLowercaseStringOrEmptyForTest(parsed.provider) || "openai";
   return {

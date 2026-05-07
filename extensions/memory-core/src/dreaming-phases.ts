@@ -39,7 +39,7 @@ type DreamingHostConfig = unknown;
 type DreamingPhaseStorageConfig = {
   timezone?: string;
   storage: { mode: "inline" | "separate" | "both"; separateReports: boolean };
-  execution?: { model?: string | readonly string[] };
+  execution?: { model?: string | string[] };
 };
 type LightDreamingConfig = DreamingPhaseStorageConfig & {
   enabled: boolean;

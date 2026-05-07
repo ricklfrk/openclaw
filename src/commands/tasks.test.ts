@@ -58,7 +58,7 @@ describe("tasks commands", () => {
       createTaskRecord({
         runtime: "cli",
         ownerKey: "agent:main:main",
-        scopeKind: "agent",
+        scopeKind: "system",
         status: "running",
         task: "Inspect issue backlog",
       });
