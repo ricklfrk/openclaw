@@ -12,6 +12,9 @@ vi.mock("../agents/agent-scope.js", () => ({
     if (typeof model === "string") {
       return model;
     }
+    if (Array.isArray(model)) {
+      return model[0];
+    }
     return model?.primary;
   }),
 }));

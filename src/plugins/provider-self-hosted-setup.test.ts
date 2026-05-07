@@ -66,7 +66,7 @@ function createContext(params: {
 
 function readPrimaryModel(config: Awaited<ReturnType<typeof configureSelfHostedTestProvider>>) {
   const model = config?.agents?.defaults?.model;
-  return model && typeof model === "object" ? model.primary : undefined;
+  return model && typeof model === "object" && !Array.isArray(model) ? model.primary : undefined;
 }
 
 async function configureSelfHostedTestProvider(params: {

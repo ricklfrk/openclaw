@@ -47,7 +47,6 @@ const FAILURE_REASON_PRIORITY: AuthProfileFailureReason[] = [
   "timeout",
   "empty_response",
   "rate_limit",
-  "empty_response",
   "no_error_details",
   "unclassified",
   "unknown",

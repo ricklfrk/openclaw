@@ -72,11 +72,15 @@ const mocks = vi.hoisted(() => ({
     (cfg: OpenClawConfig, selection: string[], opts: { scopeKeys?: string[] } = {}) => {
       const defaults = cfg.agents?.defaults;
       const existingModel = defaults?.model;
+      const existingModelObject =
+        existingModel && typeof existingModel === "object" && !Array.isArray(existingModel)
+          ? existingModel
+          : undefined;
       const primary =
         typeof existingModel === "string"
           ? existingModel
-          : existingModel && typeof existingModel === "object"
-            ? existingModel.primary
+          : existingModelObject
+            ? existingModelObject.primary
             : undefined;
       const normalized = normalizeTestModelKeys(selection);
       const scopeKeys = opts.scopeKeys ? normalizeTestModelKeys(opts.scopeKeys) : [];
@@ -92,9 +96,9 @@ const mocks = vi.hoisted(() => ({
         }
       }
       const existingFallbacks =
-        existingModel && typeof existingModel === "object" && Array.isArray(existingModel.fallbacks)
+        existingModelObject && Array.isArray(existingModelObject.fallbacks)
           ? normalizeTestModelKeys(
-              existingModel.fallbacks.map((fallback) => aliasIndex.get(fallback) ?? fallback),
+              existingModelObject.fallbacks.map((fallback) => aliasIndex.get(fallback) ?? fallback),
             )
           : [];
       const selectedFallbacks = normalized.filter((key) => key !== primary);
@@ -123,8 +127,8 @@ const mocks = vi.hoisted(() => ({
           defaults: {
             ...defaults,
             model: {
-              ...(existingModel && typeof existingModel === "object"
-                ? (({ fallbacks: _oldFallbacks, ...rest }) => rest)(existingModel)
+              ...(existingModelObject
+                ? (({ fallbacks: _oldFallbacks, ...rest }) => rest)(existingModelObject)
                 : { primary }),
               ...(fallbacks.length > 0 ? { fallbacks } : {}),
             },

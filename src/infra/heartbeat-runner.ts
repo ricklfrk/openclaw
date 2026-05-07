@@ -13,7 +13,6 @@ import {
   resolveDefaultAgentId,
 } from "../agents/agent-scope.js";
 import { appendCronStyleCurrentTimeLine } from "../agents/current-time.js";
-import { resolveEffectiveMessagesConfig } from "../agents/identity.js";
 import { isNestedAgentLane } from "../agents/lanes.js";
 import { resolveModelRefFromString, type ModelRef } from "../agents/model-selection.js";
 import { sanitizeUserFacingText } from "../agents/pi-embedded-helpers/sanitize-user-facing-text.js";

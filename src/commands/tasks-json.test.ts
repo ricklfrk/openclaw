@@ -101,8 +101,7 @@ describe("tasks JSON commands", () => {
       createTaskRecord({
         runtime: "cli",
         ownerKey: "agent:main:main",
-        scopeKind: "session",
-        runId: "task-stale-running",
+        scopeKind: "agent",
         status: "running",
         task: "Inspect issue backlog",
       });

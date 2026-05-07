@@ -68,32 +68,59 @@ const THINK_OPEN_RE = /<\s*(?:think(?:ing)?|thought|antthinking)\s*>/i;
 const THINK_CLOSE_RE = /<\s*\/\s*(?:think(?:ing)?|thought|antthinking)\s*>/gi;
 const FINAL_TAG_RE = /<\s*\/?\s*final\s*>/gi;
 
+function extractAssistantRawText(msg: AssistantMessage | undefined): string {
+  const content = (msg as { content?: unknown } | undefined)?.content;
+  if (typeof content === "string") {
+    return content.trim();
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .flatMap((block) => {
+      if (
+        block &&
+        typeof block === "object" &&
+        (block as { type?: unknown }).type === "text" &&
+        typeof (block as { text?: unknown }).text === "string"
+      ) {
+        return [(block as { text: string }).text];
+      }
+      return [];
+    })
+    .join("\n")
+    .trim();
+}
+
 /**
- * Strip thinking content from fallback text using first-open / last-close
- * strategy. Unlike the streaming stripBlockTags (which toggles on each
- * close tag), this scans the complete text and uses the LAST </think> as
- * the true boundary — immune to premature </think> inside thinking text.
+ * Strip thinking content from fallback text before generic assistant text
+ * sanitizers can erase the tag boundaries that tell us whether visible text
+ * survived outside the thinking block.
  */
 export function stripThinkingForFallback(text: string): string {
   const openMatch = THINK_OPEN_RE.exec(text);
   if (!openMatch || openMatch.index === undefined) {
-    return text.replace(FINAL_TAG_RE, "").trim();
+    return text.replace(FINAL_TAG_RE, "").replace(THINK_CLOSE_RE, "").trim();
   }
 
   THINK_CLOSE_RE.lastIndex = 0;
-  let lastCloseEnd = -1;
+  let firstCloseEnd = -1;
   for (const m of text.matchAll(THINK_CLOSE_RE)) {
-    lastCloseEnd = (m.index ?? 0) + m[0].length;
+    const closeEnd = (m.index ?? 0) + m[0].length;
+    if (closeEnd > openMatch.index) {
+      firstCloseEnd = closeEnd;
+      break;
+    }
   }
 
   let result: string;
-  if (lastCloseEnd > openMatch.index) {
-    result = text.slice(0, openMatch.index) + text.slice(lastCloseEnd);
+  if (firstCloseEnd > openMatch.index) {
+    result = text.slice(0, openMatch.index) + text.slice(firstCloseEnd);
   } else {
     result = text.slice(0, openMatch.index);
   }
 
-  return result.replace(FINAL_TAG_RE, "").trim();
+  return result.replace(FINAL_TAG_RE, "").replace(THINK_CLOSE_RE, "").trim();
 }
 
 export function isNonConformingRetryPrompt(text: string | undefined | null): boolean {
@@ -182,7 +209,9 @@ export function checkNonConformingOutput(params: {
   // After hint injected → skip profile (same profile already tried with hint).
   const skipProfile = params.formatHintInjected;
 
-  const rawTextWithTags = extractAssistantText(params.lastAssistant).trim();
+  const rawTextWithTags =
+    extractAssistantRawText(params.lastAssistant) ||
+    extractAssistantText(params.lastAssistant).trim();
   const rawText = stripThinkingForFallback(rawTextWithTags);
 
   if (rawText.length === 0) {

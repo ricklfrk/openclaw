@@ -131,7 +131,7 @@ export function applyDefaultModel(
   const existingPrimary =
     typeof existingModel === "string"
       ? existingModel
-      : existingModel && typeof existingModel === "object"
+      : existingModel && typeof existingModel === "object" && !Array.isArray(existingModel)
         ? (existingModel as { primary?: string }).primary
         : undefined;
   return {
@@ -142,7 +142,10 @@ export function applyDefaultModel(
         ...cfg.agents?.defaults,
         models,
         model: {
-          ...(existingModel && typeof existingModel === "object" && "fallbacks" in existingModel
+          ...(existingModel &&
+          typeof existingModel === "object" &&
+          !Array.isArray(existingModel) &&
+          "fallbacks" in existingModel
             ? { fallbacks: (existingModel as { fallbacks?: string[] }).fallbacks }
             : undefined),
           primary: opts?.preserveExistingPrimary === true ? (existingPrimary ?? model) : model,

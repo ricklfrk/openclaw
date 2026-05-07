@@ -397,11 +397,17 @@ export const registerTelegramHandlers = ({
       };
     }
     const modelCfg = runtimeCfg.agents?.defaults?.model;
+    const defaultModel =
+      typeof modelCfg === "string"
+        ? modelCfg
+        : Array.isArray(modelCfg)
+          ? modelCfg[0]
+          : modelCfg?.primary;
     return {
       agentId: route.agentId,
       sessionEntry: entry,
       sessionKey,
-      model: typeof modelCfg === "string" ? modelCfg : modelCfg?.primary,
+      model: defaultModel,
     };
   };
 

@@ -23,9 +23,15 @@ function mergeCronAgentModelOverride(params: {
 }) {
   const nextDefaults: AgentDefaultsConfig = { ...params.defaults };
   const existingModel =
-    nextDefaults.model && typeof nextDefaults.model === "object" ? nextDefaults.model : {};
+    nextDefaults.model &&
+    typeof nextDefaults.model === "object" &&
+    !Array.isArray(nextDefaults.model)
+      ? nextDefaults.model
+      : {};
   if (typeof params.overrideModel === "string") {
     nextDefaults.model = { ...existingModel, primary: params.overrideModel };
+  } else if (Array.isArray(params.overrideModel)) {
+    nextDefaults.model = params.overrideModel;
   } else if (params.overrideModel) {
     nextDefaults.model = { ...existingModel, ...params.overrideModel };
   }

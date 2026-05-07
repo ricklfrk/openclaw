@@ -646,7 +646,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
             id: kind === "direct" ? userId : channelId,
           },
         });
-        const replyToMode = resolveMattermostReplyToMode(account, kind);
+        const replyToMode = resolveMattermostReplyToMode(account, channelChatType(kind));
         return resolveMattermostThreadSessionContext({
           baseSessionKey: route.sessionKey,
           kind,
@@ -672,7 +672,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
             id: kind === "direct" ? opts.userId : opts.channelId,
           },
         });
-        const replyToMode = resolveMattermostReplyToMode(account, kind);
+        const replyToMode = resolveMattermostReplyToMode(account, channelChatType(kind));
         const threadContext = resolveMattermostThreadSessionContext({
           baseSessionKey: route.sessionKey,
           kind,
@@ -1103,7 +1103,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
         id: kind === "direct" ? params.payload.user_id : params.payload.channel_id,
       },
     });
-    const replyToMode = resolveMattermostReplyToMode(account, kind);
+    const replyToMode = resolveMattermostReplyToMode(account, channelChatType(kind));
     const threadContext = resolveMattermostThreadSessionContext({
       baseSessionKey: route.sessionKey,
       kind,
@@ -1419,7 +1419,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
 
         const baseSessionKey = route.sessionKey;
         const threadRootId = normalizeOptionalString(post.root_id);
-        const replyToMode = resolveMattermostReplyToMode(account, kind);
+        const replyToMode = resolveMattermostReplyToMode(account, channelChatType(kind));
         const threadContext = resolveMattermostThreadSessionContext({
           baseSessionKey,
           kind,

@@ -33,6 +33,18 @@ type GithubCopilotPluginConfig = {
   };
 };
 
+function resolveConfiguredPrimaryModel(
+  model: NonNullable<NonNullable<OpenClawConfig["agents"]>["defaults"]>["model"] | undefined,
+): string {
+  if (typeof model === "string") {
+    return model.trim();
+  }
+  if (Array.isArray(model)) {
+    return model[0]?.trim() ?? "";
+  }
+  return model?.primary?.trim() ?? "";
+}
+
 async function loadGithubCopilotRuntime() {
   return await import("./register.runtime.js");
 }
@@ -40,17 +52,15 @@ async function loadGithubCopilotRuntime() {
 function applyCopilotDefaultModel(cfg: OpenClawConfig): OpenClawConfig {
   const defaults = cfg.agents?.defaults;
   const existingModel = defaults?.model;
-  const existingPrimary =
-    typeof existingModel === "string"
-      ? existingModel.trim()
-      : typeof existingModel === "object" && typeof existingModel?.primary === "string"
-        ? existingModel.primary.trim()
-        : "";
+  const existingPrimary = resolveConfiguredPrimaryModel(existingModel);
   if (existingPrimary) {
     return cfg;
   }
   const fallbacks =
-    typeof existingModel === "object" && existingModel !== null && "fallbacks" in existingModel
+    typeof existingModel === "object" &&
+    existingModel !== null &&
+    !Array.isArray(existingModel) &&
+    "fallbacks" in existingModel
       ? (existingModel as { fallbacks?: string[] }).fallbacks
       : undefined;
   return {

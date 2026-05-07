@@ -613,9 +613,9 @@ export function createAgentEventHandler({
     const isToolEvent = evt.stream === "tool";
     const isItemEvent = evt.stream === "item";
     const toolVerbose = isToolEvent ? resolveToolVerboseLevel(evt.runId, sessionKey) : "off";
-    // Build tool payload: strip result/partialResult unless verbose=full.
+    // Build tool payload: strip result/partialResult only when verbose output is off.
     const toolPayload =
-      isToolEvent && toolVerbose !== "full"
+      isToolEvent && toolVerbose === "off"
         ? (() => {
             const data = evt.data ? { ...evt.data } : {};
             delete data.result;

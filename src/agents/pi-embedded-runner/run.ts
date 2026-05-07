@@ -51,7 +51,6 @@ import { shouldSwitchToLiveModel, clearLiveModelSwitchPending } from "../live-mo
 import {
   applyAuthHeaderOverride,
   applyLocalNoAuthHeaderOverride,
-  ensureAuthProfileStore,
   ensureAuthProfileStoreWithoutExternalProfiles,
   getApiKeyForModel,
   type ResolvedProviderAuth,

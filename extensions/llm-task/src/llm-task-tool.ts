@@ -51,6 +51,19 @@ type PluginCfg = {
   timeoutMs?: number;
 };
 
+function resolvePrimaryModelRef(model: unknown): string | undefined {
+  if (typeof model === "string") {
+    return normalizeOptionalString(model);
+  }
+  if (Array.isArray(model)) {
+    return normalizeOptionalString(model[0]);
+  }
+  if (typeof model === "object" && model !== null && "primary" in model) {
+    return normalizeOptionalString((model as { primary?: unknown }).primary);
+  }
+  return undefined;
+}
+
 type LlmTaskParams = {
   prompt?: unknown;
   input?: unknown;
@@ -109,10 +122,7 @@ export function createLlmTaskTool(api: OpenClawPluginApi) {
       const pluginCfg = (api.pluginConfig ?? {}) as PluginCfg;
 
       const defaultsModel = api.config?.agents?.defaults?.model;
-      const primary =
-        typeof defaultsModel === "string"
-          ? normalizeOptionalString(defaultsModel)
-          : normalizeOptionalString(defaultsModel?.primary);
+      const primary = resolvePrimaryModelRef(defaultsModel);
       const primaryProvider = typeof primary === "string" ? primary.split("/")[0] : undefined;
       const primaryModel =
         typeof primary === "string" ? primary.split("/").slice(1).join("/") : undefined;

@@ -127,7 +127,10 @@ export async function discoverOpenAICompatibleLocalModels(params: {
 export function applyProviderDefaultModel(cfg: OpenClawConfig, modelRef: string): OpenClawConfig {
   const existingModel = cfg.agents?.defaults?.model;
   const fallbacks =
-    existingModel && typeof existingModel === "object" && "fallbacks" in existingModel
+    existingModel &&
+    typeof existingModel === "object" &&
+    !Array.isArray(existingModel) &&
+    "fallbacks" in existingModel
       ? (existingModel as { fallbacks?: string[] }).fallbacks
       : undefined;
 
