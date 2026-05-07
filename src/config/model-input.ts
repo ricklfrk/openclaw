@@ -22,7 +22,7 @@ export function resolveAgentModelFallbackValues(model?: AgentModelConfig): strin
 }
 
 export function resolveAgentModelTimeoutMsValue(model?: AgentModelConfig): number | undefined {
-  if (!model || typeof model !== "object") {
+  if (!model || typeof model !== "object" || Array.isArray(model)) {
     return undefined;
   }
   return typeof model.timeoutMs === "number" &&

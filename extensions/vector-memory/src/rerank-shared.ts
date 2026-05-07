@@ -1,3 +1,4 @@
+import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
 /**
  * Shared rerank utility — reusable across the `conversations` (extracted),
  * `workspace`, and `daily` retrieval scopes.
@@ -11,7 +12,6 @@
  * configured backends fail; the caller should then fall back to its own
  * fusion score.
  */
-
 import { DEFAULT_LOCAL_ONNX_RERANK_MODEL, scoreQueryPassagePairs } from "./local-onnx-rerank.js";
 import { tokenize } from "./retriever.js";
 
@@ -206,34 +206,42 @@ export async function rerankPassages(
       );
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
+      const { response, release } = await fetchWithSsrFGuard({
+        url: endpoint,
         signal: controller.signal,
+        init: {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+        },
+        auditContext: "vector-memory-cross-encoder-rerank",
       });
       clearTimeout(timer);
-      if (response.ok) {
-        const data: unknown = await response.json();
-        const parsed = parseRerankResponse(provider, data);
-        if (parsed) {
-          const scores = Array.from<number>({ length: documents.length }).fill(0);
-          for (const item of parsed) {
-            if (item.index >= 0 && item.index < documents.length) {
-              scores[item.index] = normalizeCrossEncoderScore(item.score);
+      try {
+        if (response.ok) {
+          const data: unknown = await response.json();
+          const parsed = parseRerankResponse(provider, data);
+          if (parsed) {
+            const scores = Array.from<number>({ length: documents.length }).fill(0);
+            for (const item of parsed) {
+              if (item.index >= 0 && item.index < documents.length) {
+                scores[item.index] = normalizeCrossEncoderScore(item.score);
+              }
             }
+            return { scores, method: "cross-encoder" };
           }
-          return { scores, method: "cross-encoder" };
+          config.logger?.(
+            "error",
+            `cross-encoder rerank response parse failed (${provider}/${model}); falling back`,
+          );
+        } else {
+          config.logger?.(
+            "error",
+            `cross-encoder rerank HTTP ${response.status} (${provider}/${model}); falling back`,
+          );
         }
-        config.logger?.(
-          "error",
-          `cross-encoder rerank response parse failed (${provider}/${model}); falling back`,
-        );
-      } else {
-        config.logger?.(
-          "error",
-          `cross-encoder rerank HTTP ${response.status} (${provider}/${model}); falling back`,
-        );
+      } finally {
+        await release();
       }
     } catch (err) {
       config.logger?.("error", `cross-encoder rerank failed, falling back: ${String(err)}`);

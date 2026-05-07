@@ -9,6 +9,7 @@
  *   gateway_stop -> clean up all timers on shutdown
  */
 
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import {
   sendSimulatedHeartbeat,
@@ -43,7 +44,7 @@ export default definePluginEntry({
     const agentIdentity = runtime.agent.resolveAgentIdentity(api.config, "main");
 
     const deliveryDeps = {
-      loadConfig: runtime.config.loadConfig,
+      getRuntimeConfig: () => runtime.config.current() as OpenClawConfig,
       loadSessionStore: runtime.agent.session.loadSessionStore as (
         path: string,
       ) => Record<string, Record<string, unknown>>,

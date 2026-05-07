@@ -27,7 +27,7 @@ export type DeliveryLogger = {
 };
 
 export type DeliveryDeps = {
-  loadConfig: () => OpenClawConfig;
+  getRuntimeConfig: () => OpenClawConfig;
   loadSessionStore: (path: string) => Record<string, Record<string, unknown>>;
   saveSessionStore: (path: string, store: Record<string, Record<string, unknown>>) => Promise<void>;
   resolveSessionFilePath: (sessionId: string, entry: Record<string, unknown>) => string;
@@ -150,7 +150,7 @@ export async function sendSimulatedHeartbeat(params: {
   log: DeliveryLogger;
 }): Promise<DeliveryResult> {
   const { sessionKey, storePath, lastMessages, deps, log } = params;
-  const cfg = deps.loadConfig();
+  const cfg = deps.getRuntimeConfig();
   const store = deps.loadSessionStore(storePath);
   const entry = store[sessionKey];
   if (!entry) {

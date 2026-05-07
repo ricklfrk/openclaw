@@ -14,9 +14,9 @@
 
 import { execFile } from "node:child_process";
 import { writeFile, readFile, unlink, mkdtemp, rmdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/temp-path";
 
 const execFileAsync = promisify(execFile);
 
@@ -83,7 +83,7 @@ async function convertWebmToMp4(buf: Buffer): Promise<Buffer> {
     throw new Error("ffmpeg not available for video conversion");
   }
 
-  const dir = await mkdtemp(join(tmpdir(), "vm-convert-"));
+  const dir = await mkdtemp(join(resolvePreferredOpenClawTmpDir(), "vm-convert-"));
   const inputPath = join(dir, "input.webm");
   const outputPath = join(dir, "output.mp4");
 

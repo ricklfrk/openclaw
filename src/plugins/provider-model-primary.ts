@@ -1,14 +1,9 @@
-import type { AgentModelListConfig } from "../config/types.js";
+import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
+import type { AgentModelConfig } from "../config/types.agents-shared.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 
-function resolvePrimaryModel(model?: AgentModelListConfig | string): string | undefined {
-  if (typeof model === "string") {
-    return model;
-  }
-  if (model && typeof model === "object" && typeof model.primary === "string") {
-    return model.primary;
-  }
-  return undefined;
+function resolvePrimaryModel(model?: AgentModelConfig): string | undefined {
+  return resolveAgentModelPrimaryValue(model);
 }
 
 export function applyAgentDefaultPrimaryModel(params: {
@@ -31,7 +26,8 @@ export function applyAgentDefaultPrimaryModel(params: {
           ...params.cfg.agents?.defaults,
           model:
             params.cfg.agents?.defaults?.model &&
-            typeof params.cfg.agents.defaults.model === "object"
+            typeof params.cfg.agents.defaults.model === "object" &&
+            !Array.isArray(params.cfg.agents.defaults.model)
               ? {
                   ...params.cfg.agents.defaults.model,
                   primary: params.model,
@@ -49,7 +45,10 @@ export function applyPrimaryModel(cfg: OpenClawConfig, model: string): OpenClawC
   const existingModel = defaults?.model;
   const existingModels = defaults?.models;
   const fallbacks =
-    typeof existingModel === "object" && existingModel !== null && "fallbacks" in existingModel
+    typeof existingModel === "object" &&
+    existingModel !== null &&
+    !Array.isArray(existingModel) &&
+    "fallbacks" in existingModel
       ? (existingModel as { fallbacks?: string[] }).fallbacks
       : undefined;
   return {

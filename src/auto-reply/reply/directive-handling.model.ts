@@ -7,6 +7,7 @@ import {
   resolveModelRefFromString,
 } from "../../agents/model-selection.js";
 import { getChannelPlugin } from "../../channels/plugins/index.js";
+import { normalizeModelListValues } from "../../config/model-input.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
@@ -100,19 +101,12 @@ function buildModelPickerCatalog(params: {
 
     pushRef(resolvedDefault);
 
-    const modelConfig = params.cfg.agents?.defaults?.model;
-    const modelFallbacks =
-      modelConfig && typeof modelConfig === "object" ? (modelConfig.fallbacks ?? []) : [];
-    for (const fallback of modelFallbacks) {
-      pushRaw(fallback ?? "");
+    for (const fallback of normalizeModelListValues(params.cfg.agents?.defaults?.model).slice(1)) {
+      pushRaw(fallback);
     }
 
-    const imageConfig = params.cfg.agents?.defaults?.imageModel;
-    if (imageConfig && typeof imageConfig === "object") {
-      pushRaw(imageConfig.primary);
-      for (const fallback of imageConfig.fallbacks ?? []) {
-        pushRaw(fallback ?? "");
-      }
+    for (const raw of normalizeModelListValues(params.cfg.agents?.defaults?.imageModel)) {
+      pushRaw(raw);
     }
 
     for (const raw of Object.keys(params.cfg.agents?.defaults?.models ?? {})) {

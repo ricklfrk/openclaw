@@ -20,9 +20,6 @@ const cjsRequire = createRequire(import.meta.url);
 const googleShared: Record<string, any> = cjsRequire(
   resolve(piAiDist, "providers/google-shared.js"),
 );
-const googleGeminiCli: Record<string, any> = cjsRequire(
-  resolve(piAiDist, "providers/google-gemini-cli.js"),
-);
 
 export const convertMessages: (...args: any[]) => any = googleShared.convertMessages;
 export const convertTools: (...args: any[]) => any = googleShared.convertTools;
@@ -32,8 +29,50 @@ export const retainThoughtSignature: (existing: any, incoming: any) => any =
 export const mapStopReason: (reason: any) => any = googleShared.mapStopReason;
 export const mapStopReasonString: (reason: string) => any = googleShared.mapStopReasonString;
 export const mapToolChoice: (choice: any) => any = googleShared.mapToolChoice;
-export const extractRetryDelay: (
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+function parseRetryDelaySeconds(value: string): number | undefined {
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds * 1000;
+  }
+  return undefined;
+}
+
+function parseRetryAfterHeader(value: string): number | undefined {
+  const secondsDelay = parseRetryDelaySeconds(value.trim());
+  if (secondsDelay !== undefined) {
+    return secondsDelay;
+  }
+  const retryAtMs = Date.parse(value);
+  if (Number.isFinite(retryAtMs)) {
+    return Math.max(0, retryAtMs - Date.now());
+  }
+  return undefined;
+}
+
+function getResponseHeaders(response?: Response | Headers): Headers | undefined {
+  if (!response) {
+    return undefined;
+  }
+  return response instanceof Headers ? response : response.headers;
+}
+
+export function extractRetryDelay(
   errorText: string,
   response?: Response | Headers,
-) => number | undefined = googleGeminiCli.extractRetryDelay;
-/* eslint-enable @typescript-eslint/no-explicit-any */
+): number | undefined {
+  const retryAfter = getResponseHeaders(response)?.get("retry-after");
+  if (retryAfter) {
+    const parsedHeader = parseRetryAfterHeader(retryAfter);
+    if (parsedHeader !== undefined) {
+      return parsedHeader;
+    }
+  }
+
+  const retryDelay = errorText.match(/"retryDelay"\s*:\s*"([0-9]+(?:\.[0-9]+)?)s"/);
+  if (retryDelay?.[1]) {
+    return parseRetryDelaySeconds(retryDelay[1]);
+  }
+  return undefined;
+}

@@ -3,6 +3,7 @@
  * From memory-lancedb-pro, stripped of decay engine / tier manager / access tracker.
  */
 
+import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
 import type { Embedder } from "./embedder.js";
 import { DEFAULT_LOCAL_ONNX_RERANK_MODEL, scoreQueryPassagePairs } from "./local-onnx-rerank.js";
 import { filterNoise } from "./noise-filter.js";
@@ -683,59 +684,67 @@ export class MemoryRetriever {
 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 5000);
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(body),
+        const { response, release } = await fetchWithSsrFGuard({
+          url: endpoint,
           signal: controller.signal,
+          init: {
+            method: "POST",
+            headers,
+            body: JSON.stringify(body),
+          },
+          auditContext: "vector-memory-cross-encoder-rerank",
         });
         clearTimeout(timeout);
 
-        if (response.ok) {
-          const data: unknown = await response.json();
-          const parsed = parseRerankResponse(provider, data);
-          if (parsed) {
-            const returnedIndices = new Set(parsed.map((r) => r.index));
-            const reranked = parsed
-              .filter((item) => item.index >= 0 && item.index < results.length)
-              .map((item) => {
-                const original = results[item.index];
-                const bm25Score = original.sources.bm25?.score ?? 0;
-                const floor =
-                  bm25Score >= 0.75
-                    ? original.score * 0.95
-                    : bm25Score >= 0.6
-                      ? original.score * 0.9
-                      : original.score * 0.5;
-                const blendedScore = clamp01WithFloor(
-                  item.score * 0.6 + original.score * 0.4,
-                  floor,
-                );
-                return Object.assign({}, original, {
-                  score: blendedScore,
-                  sources: Object.assign({}, original.sources, {
-                    reranked: { score: item.score, method: "cross-encoder" },
-                  }),
+        try {
+          if (response.ok) {
+            const data: unknown = await response.json();
+            const parsed = parseRerankResponse(provider, data);
+            if (parsed) {
+              const returnedIndices = new Set(parsed.map((r) => r.index));
+              const reranked = parsed
+                .filter((item) => item.index >= 0 && item.index < results.length)
+                .map((item) => {
+                  const original = results[item.index];
+                  const bm25Score = original.sources.bm25?.score ?? 0;
+                  const floor =
+                    bm25Score >= 0.75
+                      ? original.score * 0.95
+                      : bm25Score >= 0.6
+                        ? original.score * 0.9
+                        : original.score * 0.5;
+                  const blendedScore = clamp01WithFloor(
+                    item.score * 0.6 + original.score * 0.4,
+                    floor,
+                  );
+                  return Object.assign({}, original, {
+                    score: blendedScore,
+                    sources: Object.assign({}, original.sources, {
+                      reranked: { score: item.score, method: "cross-encoder" },
+                    }),
+                  });
                 });
-              });
-            const unreturned = results
-              .filter((_, idx) => !returnedIndices.has(idx))
-              .map((r) =>
-                Object.assign({}, r, {
-                  score: clamp01WithFloor(r.score * 0.8, r.score * 0.5),
-                }),
-              );
-            return [...reranked, ...unreturned].toSorted((a, b) => b.score - a.score);
+              const unreturned = results
+                .filter((_, idx) => !returnedIndices.has(idx))
+                .map((r) =>
+                  Object.assign({}, r, {
+                    score: clamp01WithFloor(r.score * 0.8, r.score * 0.5),
+                  }),
+                );
+              return [...reranked, ...unreturned].toSorted((a, b) => b.score - a.score);
+            }
+            this.config.rerankLogger?.(
+              "error",
+              `cross-encoder rerank response parse failed (${provider}/${model}); falling back to BM25-lite`,
+            );
+          } else {
+            this.config.rerankLogger?.(
+              "error",
+              `cross-encoder rerank HTTP ${response.status} (${provider}/${model}); falling back to BM25-lite`,
+            );
           }
-          this.config.rerankLogger?.(
-            "error",
-            `cross-encoder rerank response parse failed (${provider}/${model}); falling back to BM25-lite`,
-          );
-        } else {
-          this.config.rerankLogger?.(
-            "error",
-            `cross-encoder rerank HTTP ${response.status} (${provider}/${model}); falling back to BM25-lite`,
-          );
+        } finally {
+          await release();
         }
       } catch (err) {
         this.config.rerankLogger?.(

@@ -6,6 +6,7 @@ import {
 import { upsertAuthProfile } from "../agents/auth-profiles.js";
 import { formatLiteralProviderPrefixedModelRef } from "../agents/model-ref-shared.js";
 import { resolveDefaultAgentWorkspaceDir } from "../agents/workspace.js";
+import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { sanitizeTerminalText } from "../terminal/safe-text.js";
@@ -94,14 +95,7 @@ function restoreConfiguredPrimaryModel(
 }
 
 function resolveConfiguredDefaultModelPrimary(cfg: OpenClawConfig): string | undefined {
-  const model = cfg.agents?.defaults?.model;
-  if (typeof model === "string") {
-    return model;
-  }
-  if (model && typeof model === "object" && typeof model.primary === "string") {
-    return model.primary;
-  }
-  return undefined;
+  return resolveAgentModelPrimaryValue(cfg.agents?.defaults?.model);
 }
 
 async function noteDefaultModelResult(params: {

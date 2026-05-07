@@ -7,6 +7,7 @@ import {
   resolveModelRefFromString,
   type ModelRef,
 } from "../agents/model-selection.js";
+import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import { resolvePluginWebSearchConfig } from "../config/plugin-web-search-config.js";
 import type { ModelDefinitionConfig } from "../config/types.models.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -38,7 +39,7 @@ type OpenRouterPricingEntry = {
   pricing: CachedModelPricing;
 };
 
-type ModelListLike = string | { primary?: string; fallbacks?: string[] } | undefined;
+type ModelListLike = string | string[] | { primary?: string; fallbacks?: string[] } | undefined;
 
 type ModelPricingManifestMetadata = {
   allRegistry: PluginManifestRegistry;
@@ -113,6 +114,12 @@ function getPricingModelNormalizationOptions(params: {
 }
 
 function listLikeFallbacks(value: ModelListLike): string[] {
+  if (Array.isArray(value)) {
+    return value.slice(1).flatMap((entry) => {
+      const normalized = normalizeOptionalString(entry);
+      return normalized ? [normalized] : [];
+    });
+  }
   if (!value || typeof value !== "object") {
     return [];
   }
@@ -907,7 +914,7 @@ export function collectConfiguredModelPricingRefs(
     ...normalizationParams,
   });
   addResolvedModelRef({
-    raw: config.agents?.defaults?.heartbeat?.model,
+    raw: resolveAgentModelPrimaryValue(config.agents?.defaults?.heartbeat?.model),
     aliasIndex,
     refs,
     ...normalizationParams,
@@ -945,7 +952,7 @@ export function collectConfiguredModelPricingRefs(
       ...normalizationParams,
     });
     addResolvedModelRef({
-      raw: agent.heartbeat?.model,
+      raw: resolveAgentModelPrimaryValue(agent.heartbeat?.model),
       aliasIndex,
       refs,
       ...normalizationParams,

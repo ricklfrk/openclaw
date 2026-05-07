@@ -5,6 +5,7 @@
 
 import { createHash } from "node:crypto";
 import OpenAI from "openai";
+import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
 import { smartChunk } from "./chunker.js";
 
 // ============================================================================
@@ -683,35 +684,38 @@ export class Embedder {
         body.output_dimensionality = this._requestDimensions;
       }
 
-      const controller = new AbortController();
-      if (signal) {
-        signal.addEventListener("abort", () => controller.abort());
-      }
-
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: controller.signal,
+      const { response, release } = await fetchWithSsrFGuard({
+        url,
+        signal,
+        init: {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        auditContext: "vector-memory-gemini-embed-content",
       });
 
-      if (!response.ok) {
-        const errText = await response.text().catch(() => "");
-        throw new Error(`Gemini embedContent API error ${response.status}: ${errText}`);
-      }
+      try {
+        if (!response.ok) {
+          const errText = await response.text().catch(() => "");
+          throw new Error(`Gemini embedContent API error ${response.status}: ${errText}`);
+        }
 
-      // Single content item → response.embedding.values (not embeddings[])
-      const result = (await response.json()) as {
-        embedding?: { values?: number[] };
-      };
-      let embedding = result.embedding?.values;
-      if (!embedding || !Array.isArray(embedding)) {
-        throw new Error("No embedding returned from Gemini multimodal API");
+        // Single content item -> response.embedding.values (not embeddings[])
+        const result = (await response.json()) as {
+          embedding?: { values?: number[] };
+        };
+        let embedding = result.embedding?.values;
+        if (!embedding || !Array.isArray(embedding)) {
+          throw new Error("No embedding returned from Gemini multimodal API");
+        }
+        if (this._needsL2Norm) {
+          embedding = l2Normalize(embedding);
+        }
+        return embedding;
+      } finally {
+        await release();
       }
-      if (this._needsL2Norm) {
-        embedding = l2Normalize(embedding);
-      }
-      return embedding;
     });
   }
 

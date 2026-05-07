@@ -3,11 +3,16 @@ import { normalizeOptionalLowercaseString } from "../shared/string-coerce.js";
 
 type LiveProviderModelConfig =
   | string
+  | readonly string[]
   | {
       primary?: string;
       fallbacks?: readonly string[];
     }
   | undefined;
+
+function isReadonlyStringArray(value: LiveProviderModelConfig): value is readonly string[] {
+  return Array.isArray(value);
+}
 
 export function redactLiveApiKey(value: string | undefined): string {
   const trimmed = value?.trim();
@@ -78,6 +83,12 @@ export function resolveConfiguredLiveProviderModels(
   };
   if (typeof configured === "string") {
     add(configured);
+    return resolved;
+  }
+  if (isReadonlyStringArray(configured)) {
+    for (const entry of configured) {
+      add(entry);
+    }
     return resolved;
   }
   add(configured?.primary);

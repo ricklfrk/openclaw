@@ -1221,11 +1221,11 @@ export function applyModelFallbacksFromSelection(
   const existingPrimary =
     typeof existingModel === "string"
       ? existingModel
-      : existingModel && typeof existingModel === "object"
+      : existingModel && typeof existingModel === "object" && !Array.isArray(existingModel)
         ? existingModel.primary
         : undefined;
   const preservedModelFields =
-    existingModel && typeof existingModel === "object"
+    existingModel && typeof existingModel === "object" && !Array.isArray(existingModel)
       ? (({ fallbacks: _oldFallbacks, ...rest }) => rest)(existingModel)
       : {};
 
@@ -1234,7 +1234,10 @@ export function applyModelFallbacksFromSelection(
     defaultProvider: resolved.provider,
   });
   const existingFallbacks =
-    existingModel && typeof existingModel === "object" && Array.isArray(existingModel.fallbacks)
+    existingModel &&
+    typeof existingModel === "object" &&
+    !Array.isArray(existingModel) &&
+    Array.isArray(existingModel.fallbacks)
       ? resolveFallbackModelKeys({
           cfg,
           rawFallbacks: existingModel.fallbacks,

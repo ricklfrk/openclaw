@@ -3,6 +3,22 @@
   "name": "Vector Memory",
   "description": "Supplementary vector recall with LanceDB, multi-provider embedding, hybrid BM25+rerank retrieval, and per-agent storage. Designed to augment memory-core.",
   "version": "0.1.0",
+  "contracts": {
+    "tools": [
+      "vector_memory_archive",
+      "vector_memory_compact",
+      "vector_memory_detail",
+      "vector_memory_explain_rank",
+      "vector_memory_forget",
+      "vector_memory_list",
+      "vector_memory_promote",
+      "vector_memory_recall",
+      "vector_memory_stats",
+      "vector_memory_store",
+      "vector_memory_store_media",
+      "vector_memory_update"
+    ]
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

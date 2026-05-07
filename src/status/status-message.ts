@@ -21,6 +21,7 @@ import type {
   VerboseLevel,
 } from "../auto-reply/thinking.js";
 import { resolveChannelModelOverride } from "../channels/model-overrides.js";
+import { resolveAgentModelFallbackValues } from "../config/model-input.js";
 import {
   resolveMainSessionKey,
   resolveSessionFilePath,
@@ -897,11 +898,8 @@ export function buildStatusMessage(args: StatusArgs): string {
 
   // Show configured fallback models (from agent model config)
   const configuredFallbacks = (() => {
-    const modelConfig = args.agent?.model;
-    if (typeof modelConfig === "object" && modelConfig && Array.isArray(modelConfig.fallbacks)) {
-      return modelConfig.fallbacks;
-    }
-    return undefined;
+    const fallbacks = resolveAgentModelFallbackValues(args.agent?.model);
+    return fallbacks.length > 0 ? fallbacks : undefined;
   })();
   const configuredFallbacksLine = configuredFallbacks?.length
     ? `🔄 Fallbacks: ${configuredFallbacks.join(", ")}`

@@ -164,11 +164,10 @@ export async function start(state: CronServiceState) {
           markedAnyInterruptedRun = true;
         }
       }
-    }
-    if (markedAnyInterruptedRun || jobs.length > 0) {
-      await persist(state, markedAnyInterruptedRun ? undefined : { stateOnly: true });
-    }
-  });
+      if (markedAnyInterruptedRun || jobs.length > 0) {
+        await persist(state, markedAnyInterruptedRun ? undefined : { stateOnly: true });
+      }
+    });
 
     await runMissedJobs(state, {
       skipJobIds: interruptedJobIds.size > 0 ? interruptedJobIds : undefined,

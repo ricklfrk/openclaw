@@ -575,7 +575,7 @@ function inferCompletionChatType(params: {
   const explicit = normalizeChatType(
     params.requesterEntry?.chatType ?? params.requesterEntry?.origin?.chatType ?? undefined,
   );
-  if (explicit) {
+  if (explicit && explicit !== "webhook") {
     return explicit;
   }
   for (const key of [params.targetRequesterSessionKey, params.requesterSessionKey]) {

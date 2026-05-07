@@ -5,6 +5,7 @@ import {
   resolveHeartbeatPrompt as resolveHeartbeatPromptText,
 } from "../auto-reply/heartbeat.js";
 import { parseDurationMs } from "../cli/parse-duration.js";
+import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import type { AgentDefaultsConfig } from "../config/types.agent-defaults.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeAgentId } from "../routing/session-key.js";
@@ -88,7 +89,7 @@ export function resolveHeartbeatSummaryForAgent(
       everyMs: null,
       prompt: resolveHeartbeatPromptText(defaults?.prompt),
       target: defaults?.target ?? DEFAULT_HEARTBEAT_TARGET,
-      model: defaults?.model,
+      model: resolveAgentModelPrimaryValue(defaults?.model),
       ackMaxChars: Math.max(0, defaults?.ackMaxChars ?? DEFAULT_HEARTBEAT_ACK_MAX_CHARS),
     };
   }
@@ -101,7 +102,7 @@ export function resolveHeartbeatSummaryForAgent(
   );
   const target =
     merged?.target ?? defaults?.target ?? overrides?.target ?? DEFAULT_HEARTBEAT_TARGET;
-  const model = merged?.model ?? defaults?.model ?? overrides?.model;
+  const model = resolveAgentModelPrimaryValue(merged?.model ?? defaults?.model ?? overrides?.model);
   const ackMaxChars = Math.max(
     0,
     merged?.ackMaxChars ??
