@@ -762,6 +762,10 @@ function parsedSessionEntryToMessage(parsed: unknown, seq: number): unknown {
   }
   const entry = parsed as Record<string, unknown>;
   if (entry.message) {
+    const message = entry.message as TranscriptMessage;
+    if (shouldHideTranscriptUserMessage(message)) {
+      return null;
+    }
     return attachOpenClawTranscriptMeta(entry.message, {
       ...(typeof entry.id === "string" ? { id: entry.id } : {}),
       seq,
